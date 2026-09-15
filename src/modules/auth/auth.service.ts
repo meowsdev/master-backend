@@ -19,6 +19,7 @@ import {
 import { VerifyOtpDto } from './dto/verify-otp.dto';
 import { CompleteProfileDto } from './dto/complete-profile.dto';
 import { RedisService } from '../../redis/redis.service';
+import { UserRole } from '@prisma/client';
 
 import {
   ACCESS_TOKEN_EXPIRY,
@@ -187,46 +188,37 @@ export class AuthService {
           role,
         },
       });
-      if (role === 'CUSTOMER') {
-        await tx.customerProfile.upsert({
-          where: {
-            userId: userid,
-          },
-          update: {},
-          create: {
-            userId: userid,
-          },
-        });
-      }
-      if (role === 'PROVIDER') {
-        await tx.providerProfile.upsert({
-          where: {
-            userId: userid,
-          },
-          update: {},
-          create: {
-            userId: userid,
-          },
-        });
-      }
-      if (role === 'COUNSELOR') {
-        await tx.counselorProfile.upsert({
-          where: {
-            userId: userid,
-          },
-          update: {},
-          create: {
-            userId: userid,
-          },
-        });
-      }
+      await this.ensureProfile(tx, userid, role);
     });
 
     return this.getMe(userid);
   }
 
+  async switchProfile(userId: string, role: UserRole) {
+    const profileRoles: UserRole[] = [
+      UserRole.CUSTOMER,
+      UserRole.PROVIDER,
+      UserRole.COUNSELOR,
+    ];
+
+    if (!profileRoles.includes(role)) {
+      throw new BadRequestException('This role cannot be used as a profile');
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.user.update({
+        where: { id: userId },
+        data: { role },
+      });
+
+      await this.ensureProfile(tx, userId, role);
+    });
+
+    return this.getMe(userId);
+  }
+
   async getMe(userId: string) {
-    return this.prisma.user.findUnique({
+    const user = await this.prisma.user.findUnique({
       where: {
         id: userId,
       },
@@ -264,6 +256,55 @@ export class AuthService {
         },
       },
     });
+
+    if (!user) return null;
+
+    return {
+      ...user,
+      activeProfile: this.getActiveProfile(user),
+    };
+  }
+
+  private getActiveProfile(user: {
+    role: UserRole;
+    customerProfile: unknown;
+    providerProfile: unknown;
+    counselorProfile: unknown;
+  }) {
+    if (user.role === UserRole.CUSTOMER) return user.customerProfile;
+    if (user.role === UserRole.PROVIDER) return user.providerProfile;
+    if (user.role === UserRole.COUNSELOR) return user.counselorProfile;
+    return null;
+  }
+
+  private async ensureProfile(
+    tx: Parameters<Parameters<PrismaService['$transaction']>[0]>[0],
+    userId: string,
+    role: UserRole,
+  ) {
+    if (role === UserRole.CUSTOMER) {
+      await tx.customerProfile.upsert({
+        where: { userId },
+        update: {},
+        create: { userId },
+      });
+    }
+
+    if (role === UserRole.PROVIDER) {
+      await tx.providerProfile.upsert({
+        where: { userId },
+        update: {},
+        create: { userId },
+      });
+    }
+
+    if (role === UserRole.COUNSELOR) {
+      await tx.counselorProfile.upsert({
+        where: { userId },
+        update: {},
+        create: { userId },
+      });
+    }
   }
 
   private async issueTokenPair(

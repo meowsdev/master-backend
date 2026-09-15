@@ -1,4 +1,4 @@
-import { ApiPropertyOptional } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { UserRole } from '@prisma/client';
 import { IsEmail, IsEnum, IsOptional, IsString } from 'class-validator';
 
@@ -27,4 +27,14 @@ export class CompleteProfileDto {
   @IsOptional()
   @IsEnum(UserRole)
   role?: UserRole;
+}
+
+export class SwitchProfileDto {
+  @ApiProperty({
+    enum: [UserRole.CUSTOMER, UserRole.PROVIDER, UserRole.COUNSELOR],
+    example: UserRole.PROVIDER,
+    description: 'Switch current active profile for this user.',
+  })
+  @IsEnum(UserRole)
+  role!: UserRole;
 }

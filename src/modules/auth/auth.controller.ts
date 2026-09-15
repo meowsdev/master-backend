@@ -12,7 +12,10 @@ import type * as express from 'express';
 import { AuthService } from './auth.service';
 import { RequestOtpDto } from './dto/request-otp.dto';
 import { VerifyOtpDto } from './dto/verify-otp.dto';
-import { CompleteProfileDto } from './dto/complete-profile.dto';
+import {
+  CompleteProfileDto,
+  SwitchProfileDto,
+} from './dto/complete-profile.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
@@ -69,5 +72,17 @@ export class AuthController {
   @Patch('complete-profile')
   completeProfile(@Body() data: CompleteProfileDto, @Req() req: any) {
     return this.authService.completeProfile(req.user.id, data);
+  }
+
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({
+    summary: 'Switch current active profile',
+    description:
+      'Use this when one mobile number has multiple profiles. It creates the selected profile if missing and returns activeProfile.',
+  })
+  @UseGuards(JwtAuthGuard)
+  @Post('switch-profile')
+  switchProfile(@Body() data: SwitchProfileDto, @Req() req: any) {
+    return this.authService.switchProfile(req.user.id, data.role);
   }
 }
