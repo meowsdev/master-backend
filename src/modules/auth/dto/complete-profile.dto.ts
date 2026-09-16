@@ -4,7 +4,7 @@ import { IsEmail, IsEnum, IsOptional, IsString } from 'class-validator';
 
 export class CompleteProfileDto {
   @ApiPropertyOptional({
-    example: 'alif@example.com',
+    example: 'monir@example.com',
     description: 'User email address. Must be unique.',
   })
   @IsOptional()
@@ -12,7 +12,7 @@ export class CompleteProfileDto {
   email?: string;
 
   @ApiPropertyOptional({
-    example: 'Alif Khan',
+    example: 'Monir Hosin',
     description: 'User full name.',
   })
   @IsOptional()

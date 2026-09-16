@@ -22,7 +22,6 @@ import { RedisService } from '../../redis/redis.service';
 import { UserRole } from '@prisma/client';
 
 import {
-  ACCESS_TOKEN_EXPIRY,
   ACCESS_TOKEN_EXPIRY_SECONDS,
   generateRefreshToken,
   hashToken,
