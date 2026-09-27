@@ -8,16 +8,18 @@ import {
   Param,
   Patch,
   Post,
+  Query,
   Req,
 } from '@nestjs/common';
-import { ApiTags } from '@nestjs/swagger';
+import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { ServicesService } from '../services.service';
 import { CreateServiceDto, UpdateServiceDto } from '../dto/service.dto';
+import { DiscoverProvidersQueryDto } from '../dto/discover-providers.dto';
 
 @ApiTags('Service')
 @Controller('service')
 export class ServiceController {
-  constructor(private readonly service: ServicesService) {}
+  constructor(private readonly service: ServicesService) { }
 
   @Post('create')
   @HttpCode(HttpStatus.CREATED)
@@ -29,6 +31,13 @@ export class ServiceController {
   @HttpCode(HttpStatus.OK)
   getAllServices() {
     return this.service.getAllServices();
+  }
+
+  @Get('providers/discover')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Discover providers with GPS distance (Haversine) and rating filter' })
+  discoverProviders(@Query() query: DiscoverProvidersQueryDto) {
+    return this.service.discoverProviders(query);
   }
 
   @Get(':id')

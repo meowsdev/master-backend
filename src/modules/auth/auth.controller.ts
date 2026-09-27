@@ -17,6 +17,7 @@ import {
   SwitchProfileDto,
 } from './dto/complete-profile.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
+import { TechnicianLoginDto } from './dto/technician-login.dto';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 
@@ -35,6 +36,18 @@ export class AuthController {
   @Post('verify-otp')
   verifyOtp(@Body() data: VerifyOtpDto) {
     return this.authService.verifyOtp(data);
+  }
+
+  @ApiOperation({ summary: 'Technician direct password login' })
+  @Post('technician-login')
+  technicianLogin(
+    @Body() data: TechnicianLoginDto,
+    @Req() req: express.Request,
+  ) {
+    return this.authService.technicianLogin(data, {
+      userAgent: req.headers['user-agent'],
+      ipAddress: req.ip,
+    });
   }
 
   @Post('refresh')

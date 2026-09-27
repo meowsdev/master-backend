@@ -2,6 +2,7 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { RevisionStatus } from '@prisma/client';
 import {
   IsArray,
+  IsBoolean,
   IsDateString,
   IsEnum,
   IsOptional,
@@ -68,4 +69,13 @@ export class UpdateServiceRevisionDto {
   @IsOptional()
   @IsDateString()
   warrantyExpiresAt?: string;
+}
+
+export class PostRevisionFeedbackeDto {
+  @ApiProperty({
+    example: false,
+    description: 'Whether customer wants to continue with thie provider'
+  })
+  @IsBoolean()
+  continueWithProvider: boolean
 }

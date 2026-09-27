@@ -11,7 +11,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 
 @Injectable()
 export class ChatService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService) { }
 
   async getOrCreateConversation(data: CreateChatSessionDto) {
     const customerProfile = await this.prisma.customerProfile.findUnique({
@@ -27,26 +27,101 @@ export class ChatService {
       throw new NotFoundException('Customer profile not found');
     }
 
-    return this.prisma.chatSession.upsert({
-      where: {
-        customerProfileId_serviceId: {
+    return this.prisma.$transaction(async (tx) => {
+      let session = await tx.chatSession.findUnique({
+        where: {
+          customerProfileId_serviceId: {
+            customerProfileId: data.customerProfileId,
+            serviceId: data.serviceId
+          }
+        },
+        include: {
+          participants: {
+            include: {
+              user: true
+            }
+          }
+        }
+      })
+
+      if (session) {
+        return session
+      }
+
+      const leastLoadedCounselor = await tx.counselorProfile.findFirst({
+        where: {
+          isOnline: true,
+          user: {
+            status: 'ACTIVE'
+          }
+        },
+        orderBy: {
+          activeChatCount: 'asc'
+        }
+      })
+
+      session = await tx.chatSession.create({
+        data: {
+          customerId: customerProfile.userId,
           customerProfileId: data.customerProfileId,
           serviceId: data.serviceId,
+          counselorId: leastLoadedCounselor ? leastLoadedCounselor.userId : null,
+          flowType: 'CUSTOMER_COUNSELOR',
+          assignedAt: leastLoadedCounselor ? new Date() : null,
         },
-      },
-      update: {},
-      create: {
-        customerId: customerProfile.userId,
-        customerProfileId: data.customerProfileId,
-        serviceId: data.serviceId,
-      },
-      include: {
-        participants: {
-          include: {
-            user: true,
+        include: {
+          participants: {
+            include: { user: true }
+          }
+        }
+      })
+
+      await tx.chatParticipant.create({
+        data: {
+          sessionId: session.id,
+          userId: customerProfile.userId,
+          isActive: true,
+        },
+      })
+
+
+      if (leastLoadedCounselor) {
+        await tx.chatParticipant.create({
+          data: {
+            sessionId: session.id,
+            userId: leastLoadedCounselor.userId,
+            isActive: true,
           },
-        },
-      },
+        })
+
+        await tx.counselorProfile.update({
+          where: {
+            id: leastLoadedCounselor.id
+          }, data: {
+            activeChatCount: { increment: 1 }
+          }
+        })
+      }
+
+      return session
+
+
+    }
+
+    );
+  }
+
+
+  async setCounselorOnlineStatus(userId: string, isOnline: boolean) {
+    const counselor = await this.prisma.counselorProfile.findUnique({
+      where: { userId },
+    });
+    if (!counselor) {
+      throw new NotFoundException('Counselor profile not found');
+    }
+    return this.prisma.counselorProfile.update({
+      where: { userId },
+      data: { isOnline },
     });
   }
   async addParticipant(sessionId: string, userId: string) {

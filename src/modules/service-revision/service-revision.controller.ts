@@ -15,6 +15,7 @@ import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import {
   CreateServiceRevisionDto,
+  PostRevisionFeedbackeDto,
   UpdateServiceRevisionDto,
 } from './dto/service-revision.dto';
 import { ServiceRevisionService } from './service-revision.service';
@@ -26,7 +27,7 @@ import { ServiceRevisionService } from './service-revision.service';
 export class ServiceRevisionController {
   constructor(
     private readonly serviceRevisionService: ServiceRevisionService,
-  ) {}
+  ) { }
 
   @Post()
   @HttpCode(HttpStatus.CREATED)
@@ -62,4 +63,17 @@ export class ServiceRevisionController {
   remove(@Param('id', new ParseUUIDPipe()) id: string) {
     return this.serviceRevisionService.remove(id);
   }
+
+  @Post(':id/feedback')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Submit post-revision feedback (Continue with provider: Yes/No)'
+  })
+  postFeedback(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body() data: PostRevisionFeedbackeDto,
+  ) {
+    return this.serviceRevisionService.postRevisionFeedback(id, data.continueWithProvider)
+  }
+
 }

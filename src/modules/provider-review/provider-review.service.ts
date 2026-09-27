@@ -11,23 +11,81 @@ import {
 
 @Injectable()
 export class ProviderReviewService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService) { }
 
   async create(data: CreateProviderReviewDto) {
     await this.assertOrder(data.orderId);
     await this.assertProvider(data.providerId);
     await this.assertCustomer(data.customerId);
 
-    return this.prisma.providerReview.upsert({
-      where: { orderId: data.orderId },
-      update: data,
-      create: {
-        ...data,
-        continueWithProvider: data.continueWithProvider ?? false,
-        isPublic: data.isPublic ?? true,
-      },
-      include: this.includeRelations(),
-    });
+    const isPositive = data.customerRating >= 4
+    const isPublic = isPositive
+    const moderationStatus = isPositive ? "APPROVED" : "PENDING"
+    const continueWithProvider = isPositive ? (data.continueWithProvider ?? true) : false
+
+    return this.prisma.$transaction(async (tx) => {
+      const review = await tx.providerReview.upsert({
+        where: { orderId: data.orderId },
+        update: {
+          ...data,
+          isPublic,
+          moderationStatus,
+          continueWithProvider,
+        },
+        create: {
+          ...data,
+          isPublic,
+          moderationStatus,
+          continueWithProvider,
+        },
+        include: this.includeRelations()
+      })
+
+      if (!isPositive) {
+        await tx.activeChatSlot.updateMany({
+          where: {
+            providerId: data.providerId,
+            customerId: data.customerId,
+            status: { in: ['ACTIVE', 'PAUSED'] }
+          },
+          data: {
+            status: 'CLOSED'
+          }
+        })
+
+        await tx.customerRetention.updateMany({
+          where: {
+            providerId: data.providerId,
+            customerId: data.customerId,
+          },
+          data: {
+            isChatActive: false,
+            removedReason: 'Auto-removed due to negative review (Rating <= 3)'
+          }
+        })
+      } else {
+        const agg = await tx.providerReview.aggregate({
+          where: {
+            providerId: data.providerId,
+            isPublic: true,
+            moderationStatus: 'APPROVED',
+          },
+          _avg: {
+            customerRating: true
+          }
+        })
+
+        if (agg._avg.customerRating !== null) {
+          await tx.providerProfile.update({
+            where: { id: data.providerId },
+            data: {
+              rating: Number(agg._avg.customerRating.toFixed(2))
+            }
+          })
+        }
+      }
+      return review
+    })
   }
 
   findAll() {

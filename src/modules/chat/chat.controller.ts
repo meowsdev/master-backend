@@ -8,6 +8,7 @@ import {
   HttpStatus,
   Param,
   ParseUUIDPipe,
+  Patch,
   Post,
   Query,
   Req,
@@ -73,7 +74,7 @@ export class ChatController {
     private readonly chatService: ChatService,
     private readonly prisma: PrismaService,
     private readonly chatGateway: ChatGateway,
-  ) {}
+  ) { }
 
   @Post('conversations')
   @HttpCode(HttpStatus.OK)
@@ -188,4 +189,15 @@ export class ChatController {
     if (!conversation)
       throw new ForbiddenException('Conversation access denied');
   }
+
+  @Patch('counselor/status')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Toggle counselor online/offline status' })
+  setCounselorStatus(
+    @Req() req: AuthenticatedRequest,
+    @Body('isOnline') isOnline: boolean,
+  ) {
+    return this.chatService.setCounselorOnlineStatus(req.user.id, isOnline);
+  }
+
 }

@@ -12,7 +12,7 @@ import {
 
 @Injectable()
 export class OrdersService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService) { }
 
   async create(data: CreateCustomOrderDto) {
     await this.assertProvider(data.providerId);
@@ -74,6 +74,14 @@ export class OrdersService {
     const order = await this.findOne(id);
     await this.assertTechnician(data.technicianId);
 
+    const isPriceEdited = data.originalPrice !== undefined ||
+      data.adminCommission !== undefined ||
+      data.additionalPrice !== undefined;
+
+    if (isPriceEdited && order.priceEditCount >= 2) {
+      throw new BadRequestException("Price can only be modified a maximum of 2 times!")
+    }
+
     const originalPrice = data.originalPrice ?? Number(order.originalPrice);
     const adminCommission =
       data.adminCommission ?? Number(order.adminCommission);
@@ -97,8 +105,8 @@ export class OrdersService {
         ...prices,
         priceEditCount:
           data.originalPrice !== undefined ||
-          data.adminCommission !== undefined ||
-          data.additionalPrice !== undefined
+            data.adminCommission !== undefined ||
+            data.additionalPrice !== undefined
             ? { increment: 1 }
             : undefined,
       },
@@ -125,6 +133,43 @@ export class OrdersService {
 
     return { message: 'Order deleted successfully' };
   }
+
+  async acceptPrice(id: string) {
+    const order = await this.findOne(id)
+
+    return this.prisma.order.update({
+      where: { id },
+      data: {
+        orderStatus: 'IN_PROGRESS'
+      },
+      include: this.includeRelations()
+    })
+  }
+
+
+  async rejectPrice(id:string){
+    const order = await this.findOne(id)
+
+    const originalPrice=Number(order.originalPrice)
+    const adminCommission=Number(order.adminCommission)
+    const advancePaid=Number(order.advancePaid)
+
+    const prices=this.calculatePrices({
+      originalPrice,
+      adminCommission,
+      additionalPrice:0,
+      advancePaid
+    })
+
+    return this.prisma.order.update({
+      where:{id},
+      data:{
+        ...prices
+      },
+      include:this.includeRelations()
+    })
+  }
+
 
   private calculatePrices(data: {
     originalPrice: number;

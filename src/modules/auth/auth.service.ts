@@ -18,6 +18,7 @@ import {
 } from './otp.util';
 import { VerifyOtpDto } from './dto/verify-otp.dto';
 import { CompleteProfileDto } from './dto/complete-profile.dto';
+import { TechnicianLoginDto } from './dto/technician-login.dto';
 import { RedisService } from '../../redis/redis.service';
 import { UserRole } from '@prisma/client';
 
@@ -151,6 +152,86 @@ export class AuthService {
     };
   }
 
+  async technicianLogin(
+    data: TechnicianLoginDto,
+    ctx: { userAgent?: string; ipAddress?: string } = {},
+  ) {
+    const validPassword =
+      process.env.TECHNICIAN_DEFAULT_PASSWORD || '123456';
+
+    if (data.password !== validPassword) {
+      throw new UnauthorizedException('Invalid phone number or password');
+    }
+
+    let user = await this.prisma.user.findUnique({
+      where: {
+        mobileNumber: data.phoneNumber,
+      },
+      include: {
+        technicianProfile: true,
+      },
+    });
+
+    if (!user) {
+      throw new UnauthorizedException(
+        'Technician account not found with this phone number',
+      );
+    }
+
+    if (user.role !== UserRole.TECHNICIAN && !user.technicianProfile) {
+      throw new UnauthorizedException(
+        'User is not authorized as a technician',
+      );
+    }
+
+    await this.prisma.technicianProfile.upsert({
+      where: { userId: user.id },
+      update: {
+        lastLoginAt: new Date(),
+      },
+      create: {
+        userId: user.id,
+        lastLoginAt: new Date(),
+      },
+    });
+
+    if (
+      user.status !== 'ACTIVE' ||
+      !user.isVerified ||
+      user.role !== UserRole.TECHNICIAN
+    ) {
+      user = await this.prisma.user.update({
+        where: { id: user.id },
+        data: {
+          status: 'ACTIVE',
+          isVerified: true,
+          role: UserRole.TECHNICIAN,
+        },
+        include: {
+          technicianProfile: true,
+        },
+      });
+    }
+
+    const tokens = await this.issueTokenPair(user, ctx);
+
+    return {
+      user: {
+        id: user.id,
+        mobileNumber: user.mobileNumber,
+        email: user.email,
+        name: user.name,
+        profilePhoto: user.profilePhoto,
+        role: user.role,
+        status: user.status,
+        isVerified: user.isVerified,
+        createdAt: user.createdAt,
+        updatedAt: user.updatedAt,
+      },
+      ...tokens,
+    };
+  }
+
   async completeProfile(userid: string, data: CompleteProfileDto) {
     const user = await this.prisma.user.findUnique({
       where: {
@@ -253,6 +334,18 @@ export class AuthService {
             updatedAt: true,
           },
         },
+        technicianProfile: {
+          select: {
+            id: true,
+            providerAgencyId: true,
+            lastLoginAt: true,
+            invitedAt: true,
+            currentLat: true,
+            currentLong: true,
+            createdAt: true,
+            updatedAt: true,
+          },
+        },
       },
     });
 
@@ -269,10 +362,12 @@ export class AuthService {
     customerProfile: unknown;
     providerProfile: unknown;
     counselorProfile: unknown;
+    technicianProfile?: unknown;
   }) {
     if (user.role === UserRole.CUSTOMER) return user.customerProfile;
     if (user.role === UserRole.PROVIDER) return user.providerProfile;
     if (user.role === UserRole.COUNSELOR) return user.counselorProfile;
+    if (user.role === UserRole.TECHNICIAN) return user.technicianProfile;
     return null;
   }
 
