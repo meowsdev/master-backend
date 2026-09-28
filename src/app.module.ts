@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
+import { ScheduleModule } from '@nestjs/schedule';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { PrismaModule } from './prisma/prisma.module';
@@ -19,10 +20,13 @@ import { ServiceRevisionModule } from './modules/service-revision/service-revisi
 import { ProviderReviewModule } from './modules/provider-review/provider-review.module';
 import { ChatAuditLogModule } from './modules/chat-audit-log/chat-audit-log.module';
 import { CounselorAuditLogModule } from './modules/counselor-audit-log/counselor-audit-log.module';
+import { ProviderLevelingModule } from './modules/provider-leveling/provider-leveling.module';
+import { LegalEscalationModule } from './modules/legal-escalation/legal-escalation.module';
 
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
+    ScheduleModule.forRoot(),
     PrismaModule,
     RedisModule,
     AuthModule,
@@ -40,8 +44,11 @@ import { CounselorAuditLogModule } from './modules/counselor-audit-log/counselor
     ProviderReviewModule,
     ChatAuditLogModule,
     CounselorAuditLogModule,
+    ProviderLevelingModule,
+    LegalEscalationModule,
   ],
   controllers: [AppController],
   providers: [AppService],
 })
 export class AppModule {}
+

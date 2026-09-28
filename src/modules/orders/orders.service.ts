@@ -96,31 +96,81 @@ export class OrdersService {
       advancePaid,
     });
 
-    return this.prisma.order.update({
-      where: { id },
-      data: {
-        technicianId: data.technicianId,
-        orderStatus: data.orderStatus,
-        paymentStatus: data.paymentStatus,
-        ...prices,
-        priceEditCount:
-          data.originalPrice !== undefined ||
+    return this.prisma.$transaction(async (tx) => {
+      const updatedOrder = await tx.order.update({
+        where: { id },
+        data: {
+          technicianId: data.technicianId,
+          orderStatus: data.orderStatus,
+          paymentStatus: data.paymentStatus,
+          ...prices,
+          priceEditCount:
+            data.originalPrice !== undefined ||
             data.adminCommission !== undefined ||
             data.additionalPrice !== undefined
-            ? { increment: 1 }
-            : undefined,
-      },
-      include: this.includeRelations(),
+              ? { increment: 1 }
+              : undefined,
+        },
+        include: this.includeRelations(),
+      });
+
+      if (data.orderStatus === 'COMPLETED' && order.orderStatus !== 'COMPLETED') {
+        const commission = Number(order.adminCommission || 0);
+        if (commission > 0) {
+          const provider = await tx.providerProfile.findUnique({
+            where: { id: order.providerId },
+            select: { id: true, walletBalance: true },
+          });
+
+          if (provider) {
+            const newBalance = Number(provider.walletBalance) - commission;
+            await tx.providerProfile.update({
+              where: { id: order.providerId },
+              data: {
+                walletBalance: newBalance,
+                isAvailable: newBalance >= 0,
+              },
+            });
+          }
+        }
+      }
+
+      return updatedOrder;
     });
   }
 
   async updateStatus(id: string, data: UpdateOrderStatusDto) {
-    await this.findOne(id);
+    const order = await this.findOne(id);
 
-    return this.prisma.order.update({
-      where: { id },
-      data,
-      include: this.includeRelations(),
+    return this.prisma.$transaction(async (tx) => {
+      const updatedOrder = await tx.order.update({
+        where: { id },
+        data,
+        include: this.includeRelations(),
+      });
+
+      if (data.orderStatus === 'COMPLETED' && order.orderStatus !== 'COMPLETED') {
+        const commission = Number(order.adminCommission || 0);
+        if (commission > 0) {
+          const provider = await tx.providerProfile.findUnique({
+            where: { id: order.providerId },
+            select: { id: true, walletBalance: true },
+          });
+
+          if (provider) {
+            const newBalance = Number(provider.walletBalance) - commission;
+            await tx.providerProfile.update({
+              where: { id: order.providerId },
+              data: {
+                walletBalance: newBalance,
+                isAvailable: newBalance >= 0,
+              },
+            });
+          }
+        }
+      }
+
+      return updatedOrder;
     });
   }
 
@@ -135,15 +185,16 @@ export class OrdersService {
   }
 
   async acceptPrice(id: string) {
-    const order = await this.findOne(id)
+    const order = await this.findOne(id);
+    await this.assertProvider(order.providerId);
 
     return this.prisma.order.update({
       where: { id },
       data: {
-        orderStatus: 'IN_PROGRESS'
+        orderStatus: 'IN_PROGRESS',
       },
-      include: this.includeRelations()
-    })
+      include: this.includeRelations(),
+    });
   }
 
 
@@ -249,11 +300,17 @@ export class OrdersService {
   private async assertProvider(providerId: string) {
     const provider = await this.prisma.providerProfile.findUnique({
       where: { id: providerId },
-      select: { id: true },
+      select: { id: true, walletBalance: true },
     });
 
     if (!provider) {
       throw new BadRequestException('Provider profile not found');
+    }
+
+    if (Number(provider.walletBalance) < 0) {
+      throw new BadRequestException(
+        `Provider has a negative wallet balance (${provider.walletBalance} BDT). Account is locked from accepting new orders until wallet is recharged.`,
+      );
     }
   }
 
