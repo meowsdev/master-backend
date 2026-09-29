@@ -12,7 +12,7 @@ import {
 
 @Injectable()
 export class OrdersService {
-  constructor(private readonly prisma: PrismaService) { }
+  constructor(private readonly prisma: PrismaService) {}
 
   async create(data: CreateCustomOrderDto) {
     await this.assertProvider(data.providerId);
@@ -74,12 +74,15 @@ export class OrdersService {
     const order = await this.findOne(id);
     await this.assertTechnician(data.technicianId);
 
-    const isPriceEdited = data.originalPrice !== undefined ||
+    const isPriceEdited =
+      data.originalPrice !== undefined ||
       data.adminCommission !== undefined ||
       data.additionalPrice !== undefined;
 
     if (isPriceEdited && order.priceEditCount >= 2) {
-      throw new BadRequestException("Price can only be modified a maximum of 2 times!")
+      throw new BadRequestException(
+        'Price can only be modified a maximum of 2 times!',
+      );
     }
 
     const originalPrice = data.originalPrice ?? Number(order.originalPrice);
@@ -114,7 +117,10 @@ export class OrdersService {
         include: this.includeRelations(),
       });
 
-      if (data.orderStatus === 'COMPLETED' && order.orderStatus !== 'COMPLETED') {
+      if (
+        data.orderStatus === 'COMPLETED' &&
+        order.orderStatus !== 'COMPLETED'
+      ) {
         const commission = Number(order.adminCommission || 0);
         if (commission > 0) {
           const provider = await tx.providerProfile.findUnique({
@@ -149,7 +155,10 @@ export class OrdersService {
         include: this.includeRelations(),
       });
 
-      if (data.orderStatus === 'COMPLETED' && order.orderStatus !== 'COMPLETED') {
+      if (
+        data.orderStatus === 'COMPLETED' &&
+        order.orderStatus !== 'COMPLETED'
+      ) {
         const commission = Number(order.adminCommission || 0);
         if (commission > 0) {
           const provider = await tx.providerProfile.findUnique({
@@ -197,30 +206,28 @@ export class OrdersService {
     });
   }
 
+  async rejectPrice(id: string) {
+    const order = await this.findOne(id);
 
-  async rejectPrice(id:string){
-    const order = await this.findOne(id)
+    const originalPrice = Number(order.originalPrice);
+    const adminCommission = Number(order.adminCommission);
+    const advancePaid = Number(order.advancePaid);
 
-    const originalPrice=Number(order.originalPrice)
-    const adminCommission=Number(order.adminCommission)
-    const advancePaid=Number(order.advancePaid)
-
-    const prices=this.calculatePrices({
+    const prices = this.calculatePrices({
       originalPrice,
       adminCommission,
-      additionalPrice:0,
-      advancePaid
-    })
+      additionalPrice: 0,
+      advancePaid,
+    });
 
     return this.prisma.order.update({
-      where:{id},
-      data:{
-        ...prices
+      where: { id },
+      data: {
+        ...prices,
       },
-      include:this.includeRelations()
-    })
+      include: this.includeRelations(),
+    });
   }
-
 
   private calculatePrices(data: {
     originalPrice: number;
@@ -309,7 +316,7 @@ export class OrdersService {
 
     if (Number(provider.walletBalance) < 0) {
       throw new BadRequestException(
-        `Provider has a negative wallet balance (${provider.walletBalance} BDT). Account is locked from accepting new orders until wallet is recharged.`,
+        `Provider has a negative wallet balance (${provider.walletBalance.toString()} BDT). Account is locked from accepting new orders until wallet is recharged.`,
       );
     }
   }

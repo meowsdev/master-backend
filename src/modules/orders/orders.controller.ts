@@ -25,7 +25,7 @@ import { OrdersService } from './orders.service';
 @UseGuards(JwtAuthGuard)
 @Controller('orders')
 export class OrdersController {
-  constructor(private readonly ordersService: OrdersService) { }
+  constructor(private readonly ordersService: OrdersService) {}
 
   @Post()
   @HttpCode(HttpStatus.CREATED)
@@ -93,14 +93,13 @@ export class OrdersController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Accept price' })
   acceptPrice(@Param('id', new ParseUUIDPipe()) id: string) {
-    return this.ordersService.acceptPrice(id)
+    return this.ordersService.acceptPrice(id);
   }
 
   @Patch(':id/reject-price')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Reject price' })
   rejectPrice(@Param('id', new ParseUUIDPipe()) id: string) {
-    return this.ordersService.rejectPrice(id)
+    return this.ordersService.rejectPrice(id);
   }
-
 }

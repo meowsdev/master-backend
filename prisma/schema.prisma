@@ -301,6 +301,9 @@ model Service {
   name         String   @db.VarChar(100)
   description  String?  @db.VarChar(255)
   isFixedPrice Boolean  @default(false)
+  isPopular    Boolean  @default(false)
+  isFeatured   Boolean  @default(false)
+  orderCount   Int      @default(0)
   basePrice    Decimal  @default(0.0) @db.Decimal(10, 2)
   durationMin  Int?
   isActive     Boolean  @default(true)
@@ -315,6 +318,7 @@ model Service {
   serviceAssignments ServiceAssignee[]
 
   @@index([categoryId])
+  @@index([isPopular])
 }
 
 model ServiceAssignee {

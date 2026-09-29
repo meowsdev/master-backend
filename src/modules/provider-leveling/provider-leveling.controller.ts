@@ -15,7 +15,8 @@ export class ProviderLevelingController {
 
   @ApiBearerAuth('JWT-auth')
   @ApiOperation({
-    summary: 'Manually trigger monthly provider leveling evaluation (Admin/Manager)',
+    summary:
+      'Manually trigger monthly provider leveling evaluation (Admin/Manager)',
   })
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.ADMIN, UserRole.MANAGER)

@@ -74,7 +74,7 @@ export class ChatController {
     private readonly chatService: ChatService,
     private readonly prisma: PrismaService,
     private readonly chatGateway: ChatGateway,
-  ) { }
+  ) {}
 
   @Post('conversations')
   @HttpCode(HttpStatus.OK)
@@ -156,7 +156,7 @@ export class ChatController {
       throw new BadRequestException('Message text or file URL is required');
     }
     const message = await this.chatService.saveMessage(req.user.id, dto);
-    await this.chatGateway.publishMessage(message);
+    this.chatGateway.publishMessage(message);
     return message;
   }
 
@@ -199,5 +199,4 @@ export class ChatController {
   ) {
     return this.chatService.setCounselorOnlineStatus(req.user.id, isOnline);
   }
-
 }

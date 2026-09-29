@@ -25,7 +25,11 @@ export class DiscoverProvidersQueryDto {
   @IsNumber()
   longitude?: number;
 
-  @ApiPropertyOptional({ example: 25, default: 25, description: 'Filter radius in kilometers' })
+  @ApiPropertyOptional({
+    example: 25,
+    default: 25,
+    description: 'Filter radius in kilometers',
+  })
   @IsOptional()
   @Type(() => Number)
   @IsNumber()

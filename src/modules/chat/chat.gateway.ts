@@ -151,7 +151,7 @@ export class ChatGateway implements OnGatewayInit {
       throw new WsException('Message text or file URL is required');
     }
     const message = await this.chatService.saveMessage(senderId, dto);
-    await this.publishMessage(message);
+    this.publishMessage(message);
     return message;
   }
 
@@ -168,9 +168,7 @@ export class ChatGateway implements OnGatewayInit {
     };
   }
 
-  async publishMessage(
-    message: Awaited<ReturnType<ChatService['saveMessage']>>,
-  ) {
+  publishMessage(message: Awaited<ReturnType<ChatService['saveMessage']>>) {
     const room = this.room(message.sessionId);
     this.server.to(room).emit('newMessage', message);
   }

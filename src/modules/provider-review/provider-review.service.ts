@@ -11,17 +11,19 @@ import {
 
 @Injectable()
 export class ProviderReviewService {
-  constructor(private readonly prisma: PrismaService) { }
+  constructor(private readonly prisma: PrismaService) {}
 
   async create(data: CreateProviderReviewDto) {
     await this.assertOrder(data.orderId);
     await this.assertProvider(data.providerId);
     await this.assertCustomer(data.customerId);
 
-    const isPositive = data.customerRating >= 4
-    const isPublic = isPositive
-    const moderationStatus = isPositive ? "APPROVED" : "PENDING"
-    const continueWithProvider = isPositive ? (data.continueWithProvider ?? true) : false
+    const isPositive = data.customerRating >= 4;
+    const isPublic = isPositive;
+    const moderationStatus = isPositive ? 'APPROVED' : 'PENDING';
+    const continueWithProvider = isPositive
+      ? (data.continueWithProvider ?? true)
+      : false;
 
     return this.prisma.$transaction(async (tx) => {
       const review = await tx.providerReview.upsert({
@@ -38,20 +40,20 @@ export class ProviderReviewService {
           moderationStatus,
           continueWithProvider,
         },
-        include: this.includeRelations()
-      })
+        include: this.includeRelations(),
+      });
 
       if (!isPositive) {
         await tx.activeChatSlot.updateMany({
           where: {
             providerId: data.providerId,
             customerId: data.customerId,
-            status: { in: ['ACTIVE', 'PAUSED'] }
+            status: { in: ['ACTIVE', 'PAUSED'] },
           },
           data: {
-            status: 'CLOSED'
-          }
-        })
+            status: 'CLOSED',
+          },
+        });
 
         await tx.customerRetention.updateMany({
           where: {
@@ -60,9 +62,9 @@ export class ProviderReviewService {
           },
           data: {
             isChatActive: false,
-            removedReason: 'Auto-removed due to negative review (Rating <= 3)'
-          }
-        })
+            removedReason: 'Auto-removed due to negative review (Rating <= 3)',
+          },
+        });
       } else {
         const agg = await tx.providerReview.aggregate({
           where: {
@@ -71,21 +73,21 @@ export class ProviderReviewService {
             moderationStatus: 'APPROVED',
           },
           _avg: {
-            customerRating: true
-          }
-        })
+            customerRating: true,
+          },
+        });
 
         if (agg._avg.customerRating !== null) {
           await tx.providerProfile.update({
             where: { id: data.providerId },
             data: {
-              rating: Number(agg._avg.customerRating.toFixed(2))
-            }
-          })
+              rating: Number(agg._avg.customerRating.toFixed(2)),
+            },
+          });
         }
       }
-      return review
-    })
+      return review;
+    });
   }
 
   findAll() {

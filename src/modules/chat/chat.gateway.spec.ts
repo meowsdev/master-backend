@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/unbound-method */
 jest.mock('@nestjs/jwt', () => ({ JwtService: class JwtService {} }));
 
 import { ChatGateway } from './chat.gateway';

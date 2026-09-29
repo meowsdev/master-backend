@@ -74,8 +74,8 @@ export class UpdateServiceRevisionDto {
 export class PostRevisionFeedbackeDto {
   @ApiProperty({
     example: false,
-    description: 'Whether customer wants to continue with thie provider'
+    description: 'Whether customer wants to continue with thie provider',
   })
   @IsBoolean()
-  continueWithProvider: boolean
+  continueWithProvider: boolean;
 }

@@ -9,7 +9,6 @@ import {
   Patch,
   Post,
   Query,
-  Req,
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
@@ -32,14 +31,29 @@ export class ServiceController {
   @Roles(UserRole.ADMIN, UserRole.MANAGER)
   @Post('create')
   @HttpCode(HttpStatus.CREATED)
-  createService(@Body() data: CreateServiceDto, @Req() req) {
+  createService(@Body() data: CreateServiceDto) {
     return this.service.createService(data);
+  }
+
+  @Get('popular')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Get popular/trending services across all categories',
+  })
+  getPopularServices() {
+    return this.service.getAllServices(undefined, undefined, true);
   }
 
   @Get('all')
   @HttpCode(HttpStatus.OK)
-  getAllServices(@Query('categoryId') categoryId?: string) {
-    return this.service.getAllServices(categoryId);
+  getAllServices(
+    @Query('categoryId') categoryId?: string,
+    @Query('search') search?: string,
+    @Query('isPopular') isPopular?: string,
+  ) {
+    const popularBool =
+      isPopular === 'true' ? true : isPopular === 'false' ? false : undefined;
+    return this.service.getAllServices(categoryId, search, popularBool);
   }
 
   @Get('providers/discover')
@@ -64,10 +78,7 @@ export class ServiceController {
   @Roles(UserRole.ADMIN, UserRole.MANAGER)
   @Patch(':id')
   @HttpCode(HttpStatus.OK)
-  updateSingleService(
-    @Param('id') id: string,
-    @Body() data: UpdateServiceDto,
-  ) {
+  updateSingleService(@Param('id') id: string, @Body() data: UpdateServiceDto) {
     return this.service.updateSingleService(id, data);
   }
 

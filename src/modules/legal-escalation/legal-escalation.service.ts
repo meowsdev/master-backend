@@ -1,10 +1,38 @@
-import {
-  BadRequestException,
-  Injectable,
-  NotFoundException,
-} from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateLegalEscalationDto } from './dto/create-legal-escalation.dto';
+
+export interface LegalDossier {
+  incidentReportId: string;
+  generatedAt: string | Date;
+  orderSummary: {
+    id: string;
+    serviceName?: string | null;
+    orderStatus: string;
+    paymentStatus: string;
+    totalPrice: any;
+    advancePaid: any;
+    dueAmount: any;
+  };
+  customer: {
+    name?: string | null;
+    phone: string;
+  };
+  provider: {
+    name?: string | null;
+    phone: string;
+    kycStatus?: string;
+    nidNumber?: string | null;
+    tradeLicenseNo?: string | null;
+  };
+  chatEvidenceCount: number;
+  chatTranscript: Array<{
+    sentAt: string | Date;
+    sender: string;
+    text?: string | null;
+    fileUrl?: string | null;
+  }>;
+}
 
 @Injectable()
 export class LegalEscalationService {
@@ -247,7 +275,7 @@ export class LegalEscalationService {
     });
   }
 
-  private renderPrintableHtml(dossier: any): string {
+  private renderPrintableHtml(dossier: LegalDossier): string {
     return `
 <!DOCTYPE html>
 <html>
@@ -288,7 +316,7 @@ export class LegalEscalationService {
   <div class="chat-box">
     ${dossier.chatTranscript
       .map(
-        (t: any) =>
+        (t) =>
           `<div class="chat-msg"><strong>[${new Date(t.sentAt).toLocaleTimeString()}] ${t.sender}:</strong> ${t.text || (t.fileUrl ? '[Attached File]' : '')}</div>`,
       )
       .join('')}

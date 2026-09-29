@@ -71,7 +71,7 @@ export class AuthController {
   @ApiOperation({ summary: 'Get logged in user with profile IDs' })
   @UseGuards(JwtAuthGuard)
   @Get('me')
-  me(@Req() req: any) {
+  me(@Req() req: { user: { id: string } }) {
     return this.authService.getMe(req.user.id);
   }
 
@@ -83,7 +83,10 @@ export class AuthController {
   })
   @UseGuards(JwtAuthGuard)
   @Patch('complete-profile')
-  completeProfile(@Body() data: CompleteProfileDto, @Req() req: any) {
+  completeProfile(
+    @Body() data: CompleteProfileDto,
+    @Req() req: { user: { id: string } },
+  ) {
     return this.authService.completeProfile(req.user.id, data);
   }
 
@@ -95,7 +98,10 @@ export class AuthController {
   })
   @UseGuards(JwtAuthGuard)
   @Post('switch-profile')
-  switchProfile(@Body() data: SwitchProfileDto, @Req() req: any) {
+  switchProfile(
+    @Body() data: SwitchProfileDto,
+    @Req() req: { user: { id: string } },
+  ) {
     return this.authService.switchProfile(req.user.id, data.role);
   }
 }

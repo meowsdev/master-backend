@@ -12,7 +12,7 @@ import {
 
 @Injectable()
 export class ActiveChatSlotService {
-  constructor(private readonly prisma: PrismaService) { }
+  constructor(private readonly prisma: PrismaService) {}
 
   async create(data: CreateActiveChatSlotDto) {
     await this.assertProvider(data.providerId);
@@ -24,24 +24,26 @@ export class ActiveChatSlotService {
         customerId: data.customerId,
         orderStatus: 'IN_PROGRESS',
         providerId: {
-          not: data.providerId
-        }
+          not: data.providerId,
+        },
       },
       include: {
         provider: {
           include: {
             user: {
               select: {
-                name: true
-              }
-            }
-          }
-        }
-      }
-    })
+                name: true,
+              },
+            },
+          },
+        },
+      },
+    });
 
     if (runnitnOrder) {
-      throw new BadRequestException(`Cannot switch provider. You currently have an active order in progress with ${runnitnOrder.provider.user.name || 'another provider'}. Please complete that order before switching providers. `)
+      throw new BadRequestException(
+        `Cannot switch provider. You currently have an active order in progress with ${runnitnOrder.provider.user.name || 'another provider'}. Please complete that order before switching providers. `,
+      );
     }
 
     await this.prisma.activeChatSlot.updateMany({
@@ -59,20 +61,20 @@ export class ActiveChatSlotService {
       where: {
         providerId: data.providerId,
         customerId: data.customerId,
-        serviceId: data.serviceId
-      }
-    })
+        serviceId: data.serviceId,
+      },
+    });
 
     if (existingSlot) {
       return this.prisma.activeChatSlot.update({
         where: {
-          id: existingSlot.id
+          id: existingSlot.id,
         },
         data: {
-          status: ChatSlotStatus.ACTIVE
+          status: ChatSlotStatus.ACTIVE,
         },
-        include: this.includeRelations()
-      })
+        include: this.includeRelations(),
+      });
     }
 
     return this.prisma.activeChatSlot.create({
@@ -82,8 +84,8 @@ export class ActiveChatSlotService {
         serviceId: data.serviceId,
         status: data.status ?? ChatSlotStatus.ACTIVE,
       },
-      include: this.includeRelations()
-    })
+      include: this.includeRelations(),
+    });
   }
 
   findAll() {

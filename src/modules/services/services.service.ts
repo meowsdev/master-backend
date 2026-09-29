@@ -97,16 +97,37 @@ export class ServicesService {
     return this.prisma.service.create({ data });
   }
 
-  async getAllServices(categoryId?: string) {
+  async getAllServices(
+    categoryId?: string,
+    search?: string,
+    isPopular?: boolean,
+  ) {
     return this.prisma.service.findMany({
       where: {
         isActive: true,
         isDeleted: false,
-        categoryId: categoryId || undefined,
+        ...(categoryId ? { categoryId } : {}),
+        ...(isPopular !== undefined ? { isPopular } : {}),
+        ...(search
+          ? {
+              OR: [
+                { name: { contains: search, mode: 'insensitive' } },
+                { description: { contains: search, mode: 'insensitive' } },
+                {
+                  category: { name: { contains: search, mode: 'insensitive' } },
+                },
+              ],
+            }
+          : {}),
       },
       include: {
         category: true,
       },
+      orderBy: [
+        { isPopular: 'desc' },
+        { orderCount: 'desc' },
+        { createdAt: 'asc' },
+      ],
     });
   }
 
@@ -147,9 +168,15 @@ export class ServicesService {
     });
   }
 
-
   async discoverProviders(query: DiscoverProvidersQueryDto) {
-    const { serviceId, categoryId, latitude, longitude, radiusKm = 25, search } = query;
+    const {
+      serviceId,
+      categoryId,
+      latitude,
+      longitude,
+      radiusKm = 25,
+      search,
+    } = query;
     // ১. প্রোভাইডারদের ডাটাবেজ থেকে নিয়ে আসা
     const providers = await this.prisma.providerProfile.findMany({
       where: {

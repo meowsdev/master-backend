@@ -11,7 +11,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 
 @Injectable()
 export class ChatService {
-  constructor(private readonly prisma: PrismaService) { }
+  constructor(private readonly prisma: PrismaService) {}
 
   async getOrCreateConversation(data: CreateChatSessionDto) {
     const customerProfile = await this.prisma.customerProfile.findUnique({
@@ -32,49 +32,51 @@ export class ChatService {
         where: {
           customerProfileId_serviceId: {
             customerProfileId: data.customerProfileId,
-            serviceId: data.serviceId
-          }
+            serviceId: data.serviceId,
+          },
         },
         include: {
           participants: {
             include: {
-              user: true
-            }
-          }
-        }
-      })
+              user: true,
+            },
+          },
+        },
+      });
 
       if (session) {
-        return session
+        return session;
       }
 
       const leastLoadedCounselor = await tx.counselorProfile.findFirst({
         where: {
           isOnline: true,
           user: {
-            status: 'ACTIVE'
-          }
+            status: 'ACTIVE',
+          },
         },
         orderBy: {
-          activeChatCount: 'asc'
-        }
-      })
+          activeChatCount: 'asc',
+        },
+      });
 
       session = await tx.chatSession.create({
         data: {
           customerId: customerProfile.userId,
           customerProfileId: data.customerProfileId,
           serviceId: data.serviceId,
-          counselorId: leastLoadedCounselor ? leastLoadedCounselor.userId : null,
+          counselorId: leastLoadedCounselor
+            ? leastLoadedCounselor.userId
+            : null,
           flowType: 'CUSTOMER_COUNSELOR',
           assignedAt: leastLoadedCounselor ? new Date() : null,
         },
         include: {
           participants: {
-            include: { user: true }
-          }
-        }
-      })
+            include: { user: true },
+          },
+        },
+      });
 
       await tx.chatParticipant.create({
         data: {
@@ -82,8 +84,7 @@ export class ChatService {
           userId: customerProfile.userId,
           isActive: true,
         },
-      })
-
+      });
 
       if (leastLoadedCounselor) {
         await tx.chatParticipant.create({
@@ -92,25 +93,21 @@ export class ChatService {
             userId: leastLoadedCounselor.userId,
             isActive: true,
           },
-        })
+        });
 
         await tx.counselorProfile.update({
           where: {
-            id: leastLoadedCounselor.id
-          }, data: {
-            activeChatCount: { increment: 1 }
-          }
-        })
+            id: leastLoadedCounselor.id,
+          },
+          data: {
+            activeChatCount: { increment: 1 },
+          },
+        });
       }
 
-      return session
-
-
-    }
-
-    );
+      return session;
+    });
   }
-
 
   async setCounselorOnlineStatus(userId: string, isOnline: boolean) {
     const counselor = await this.prisma.counselorProfile.findUnique({

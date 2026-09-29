@@ -25,14 +25,15 @@ export class LegalEscalationController {
   ) {}
 
   @ApiOperation({
-    summary: 'Escalate order to legal, lock provider/order, and close sessions (Admin/Support/Manager)',
+    summary:
+      'Escalate order to legal, lock provider/order, and close sessions (Admin/Support/Manager)',
   })
   @Roles(UserRole.ADMIN, UserRole.SUPPORT, UserRole.MANAGER)
   @Post('orders/:orderId/escalate')
   escalateOrder(
     @Param('orderId') orderId: string,
     @Body() dto: CreateLegalEscalationDto,
-    @Req() req: any,
+    @Req() req: { user?: { id?: string } },
   ) {
     return this.legalEscalationService.escalateOrder(
       orderId,
@@ -42,7 +43,8 @@ export class LegalEscalationController {
   }
 
   @ApiOperation({
-    summary: 'Get legal dossier and printable HTML report for an order (Admin/Support/Manager)',
+    summary:
+      'Get legal dossier and printable HTML report for an order (Admin/Support/Manager)',
   })
   @Roles(UserRole.ADMIN, UserRole.SUPPORT, UserRole.MANAGER)
   @Get('reports/:orderId')

@@ -156,8 +156,7 @@ export class AuthService {
     data: TechnicianLoginDto,
     ctx: { userAgent?: string; ipAddress?: string } = {},
   ) {
-    const validPassword =
-      process.env.TECHNICIAN_DEFAULT_PASSWORD || '123456';
+    const validPassword = process.env.TECHNICIAN_DEFAULT_PASSWORD || '123456';
 
     if (data.password !== validPassword) {
       throw new UnauthorizedException('Invalid phone number or password');
@@ -179,9 +178,7 @@ export class AuthService {
     }
 
     if (user.role !== UserRole.TECHNICIAN && !user.technicianProfile) {
-      throw new UnauthorizedException(
-        'User is not authorized as a technician',
-      );
+      throw new UnauthorizedException('User is not authorized as a technician');
     }
 
     await this.prisma.technicianProfile.upsert({

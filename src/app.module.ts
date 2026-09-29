@@ -51,4 +51,3 @@ import { LegalEscalationModule } from './modules/legal-escalation/legal-escalati
   providers: [AppService],
 })
 export class AppModule {}
-

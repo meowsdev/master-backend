@@ -8,7 +8,6 @@ import {
   Param,
   Patch,
   Post,
-  Req,
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
@@ -30,7 +29,7 @@ export class CategoryController {
   @Roles(UserRole.ADMIN, UserRole.MANAGER)
   @Post('create')
   @HttpCode(HttpStatus.CREATED)
-  createCategory(@Body() data: CreateCategoryDto, @Req() req) {
+  createCategory(@Body() data: CreateCategoryDto) {
     return this.categoryService.createCategory(data);
   }
 
