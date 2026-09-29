@@ -8,18 +8,26 @@ import {
   Param,
   Patch,
   Post,
-  Query,
   Req,
+  UseGuards,
 } from '@nestjs/common';
-import { ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { ServicesService } from '../services.service';
 import { CreateCategoryDto, UpdateCategoryDto } from '../dto/category.dto';
+import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
+import { RolesGuard } from '../../auth/guards/roles.guard';
+import { Roles } from '../../auth/decorators/roles.decorator';
+import { UserRole } from '@prisma/client';
 
 @ApiTags('Category')
 @Controller('category')
 export class CategoryController {
   constructor(private readonly categoryService: ServicesService) {}
 
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({ summary: 'Create category (ADMIN, MANAGER only)' })
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.MANAGER)
   @Post('create')
   @HttpCode(HttpStatus.CREATED)
   createCategory(@Body() data: CreateCategoryDto, @Req() req) {
@@ -38,6 +46,10 @@ export class CategoryController {
     return this.categoryService.getSingleCategory(identifier);
   }
 
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({ summary: 'Update category (ADMIN, MANAGER only)' })
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.MANAGER)
   @Patch(':id')
   @HttpCode(HttpStatus.OK)
   updateSingleCategory(
@@ -47,6 +59,10 @@ export class CategoryController {
     return this.categoryService.updateSingleCategory(id, data);
   }
 
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({ summary: 'Delete category (ADMIN, MANAGER only)' })
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.MANAGER)
   @Delete(':id')
   @HttpCode(HttpStatus.OK)
   deleteSingleCategory(@Param('id') id: string) {

@@ -275,14 +275,10 @@ export class AuthService {
   }
 
   async switchProfile(userId: string, role: UserRole) {
-    const profileRoles: UserRole[] = [
-      UserRole.CUSTOMER,
-      UserRole.PROVIDER,
-      UserRole.COUNSELOR,
-    ];
+    const validRoles: UserRole[] = Object.values(UserRole);
 
-    if (!profileRoles.includes(role)) {
-      throw new BadRequestException('This role cannot be used as a profile');
+    if (!validRoles.includes(role)) {
+      throw new BadRequestException('Invalid role specified');
     }
 
     await this.prisma.$transaction(async (tx) => {
@@ -294,7 +290,19 @@ export class AuthService {
       await this.ensureProfile(tx, userId, role);
     });
 
-    return this.getMe(userId);
+    const me = await this.getMe(userId);
+    if (!me) throw new BadRequestException('User not found');
+
+    const tokens = await this.issueTokenPair({
+      id: me.id,
+      mobileNumber: me.mobileNumber,
+      role: me.role,
+    });
+
+    return {
+      ...me,
+      ...tokens,
+    };
   }
 
   async getMe(userId: string) {
@@ -351,8 +359,27 @@ export class AuthService {
 
     if (!user) return null;
 
+    const availableRoles: UserRole[] = [];
+    if (user.customerProfile) availableRoles.push(UserRole.CUSTOMER);
+    if (user.providerProfile) availableRoles.push(UserRole.PROVIDER);
+    if (user.counselorProfile) availableRoles.push(UserRole.COUNSELOR);
+    if (user.technicianProfile) availableRoles.push(UserRole.TECHNICIAN);
+    const staffRoles: UserRole[] = [
+      UserRole.ADMIN,
+      UserRole.MANAGER,
+      UserRole.HR,
+      UserRole.SUPPORT,
+    ];
+    if (staffRoles.includes(user.role)) {
+      availableRoles.push(user.role);
+    }
+    if (!availableRoles.includes(user.role)) {
+      availableRoles.push(user.role);
+    }
+
     return {
       ...user,
+      availableRoles,
       activeProfile: this.getActiveProfile(user),
     };
   }
@@ -394,6 +421,14 @@ export class AuthService {
 
     if (role === UserRole.COUNSELOR) {
       await tx.counselorProfile.upsert({
+        where: { userId },
+        update: {},
+        create: { userId },
+      });
+    }
+
+    if (role === UserRole.TECHNICIAN) {
+      await tx.technicianProfile.upsert({
         where: { userId },
         update: {},
         create: { userId },

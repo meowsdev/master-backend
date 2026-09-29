@@ -41,7 +41,12 @@ export class ServicesService {
   async getAllCategory() {
     return this.prisma.serviceCategory.findMany({
       where: { isActive: true, isDeleted: false },
-      include: { _count: { select: { services: true } } },
+      include: {
+        services: {
+          where: { isActive: true, isDeleted: false },
+        },
+        _count: { select: { services: true } },
+      },
     });
   }
 
@@ -51,6 +56,11 @@ export class ServicesService {
         OR: [{ id: identifier }, { slug: identifier }],
         isDeleted: false,
         isActive: true,
+      },
+      include: {
+        services: {
+          where: { isActive: true, isDeleted: false },
+        },
       },
     });
 
@@ -87,11 +97,12 @@ export class ServicesService {
     return this.prisma.service.create({ data });
   }
 
-  async getAllServices() {
+  async getAllServices(categoryId?: string) {
     return this.prisma.service.findMany({
       where: {
         isActive: true,
         isDeleted: false,
+        categoryId: categoryId || undefined,
       },
       include: {
         category: true,
