@@ -104,8 +104,12 @@ export class ChatGateway implements OnGatewayInit {
       where: {
         id: conversationId,
         OR: [
+          { customerId: userId },
           { customerUser: { id: userId } },
-          { participants: { some: { userId, isActive: true, leftAt: null } } },
+          { customerProfile: { userId } },
+          { counselorId: userId },
+          { providerId: userId },
+          { participants: { some: { userId, isActive: true } } },
         ],
       },
       select: { id: true },
@@ -146,11 +150,18 @@ export class ChatGateway implements OnGatewayInit {
     @ConnectedSocket() client: Socket,
     @MessageBody() dto: SendMessageDto,
   ) {
-    const senderId = await this.authorize(client, dto.conversationId);
+    const conversationId = dto.conversationId || dto.sessionId;
+    if (!conversationId) {
+      throw new WsException('conversationId is required');
+    }
+    const senderId = await this.authorize(client, conversationId);
     if (!dto.text?.trim() && !dto.fileUrl?.trim()) {
       throw new WsException('Message text or file URL is required');
     }
-    const message = await this.chatService.saveMessage(senderId, dto);
+    const message = await this.chatService.saveMessage(senderId, {
+      ...dto,
+      conversationId,
+    });
     this.publishMessage(message);
     return message;
   }
@@ -170,7 +181,13 @@ export class ChatGateway implements OnGatewayInit {
 
   publishMessage(message: Awaited<ReturnType<ChatService['saveMessage']>>) {
     const room = this.room(message.sessionId);
-    this.server.to(room).emit('newMessage', message);
+    if (this.server) {
+      try {
+        this.server.to(room).emit('newMessage', message);
+      } catch {
+        // Safe fallback if websocket emit encounters temporary transport error
+      }
+    }
   }
 
   @SubscribeMessage('getMessages')

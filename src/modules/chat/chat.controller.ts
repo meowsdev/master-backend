@@ -85,19 +85,43 @@ export class ChatController {
     @Req() req: AuthenticatedRequest,
     @Body() dto: CreateChatSessionDto,
   ) {
-    const profile = await this.prisma.customerProfile.findFirst({
-      where: { id: dto.customerProfileId, userId: req.user.id },
+    let customerProfile = await this.prisma.customerProfile.findUnique({
+      where: { userId: req.user.id },
       select: { id: true },
     });
-    if (!profile)
-      throw new ForbiddenException('Customer profile access denied');
+    if (!customerProfile) {
+      customerProfile = await this.prisma.customerProfile.create({
+        data: { userId: req.user.id },
+        select: { id: true },
+      });
+    }
 
-    const service = await this.prisma.service.findFirst({
-      where: { id: dto.serviceId, isActive: true, isDeleted: false },
-      select: { id: true },
+    let targetServiceId = dto.serviceId;
+    const service = targetServiceId
+      ? await this.prisma.service.findFirst({
+          where: { id: targetServiceId, isActive: true, isDeleted: false },
+          select: { id: true },
+        })
+      : null;
+
+    if (!service) {
+      const fallbackService = await this.prisma.service.findFirst({
+        where: { isActive: true, isDeleted: false },
+        select: { id: true },
+      });
+      if (!fallbackService) {
+        throw new BadRequestException(
+          'No active service found to create consultation',
+        );
+      }
+      targetServiceId = fallbackService.id;
+    }
+
+    return this.chatService.getOrCreateConversation({
+      serviceId: targetServiceId!,
+      customerProfileId: customerProfile.id,
+      providerId: dto.providerId,
     });
-    if (!service) throw new BadRequestException('Service is unavailable');
-    return this.chatService.getOrCreateConversation(dto);
   }
 
   @Post('conversations/:conversationId/participants')
@@ -151,11 +175,18 @@ export class ChatController {
     @Req() req: AuthenticatedRequest,
     @Body() dto: SendMessageDto,
   ) {
-    await this.assertAccess(req.user.id, dto.conversationId);
+    const conversationId = dto.conversationId || dto.sessionId;
+    if (!conversationId) {
+      throw new BadRequestException('conversationId is required');
+    }
+    await this.assertAccess(req.user.id, conversationId);
     if (!dto.text?.trim() && !dto.fileUrl?.trim()) {
       throw new BadRequestException('Message text or file URL is required');
     }
-    const message = await this.chatService.saveMessage(req.user.id, dto);
+    const message = await this.chatService.saveMessage(req.user.id, {
+      ...dto,
+      conversationId,
+    });
     this.chatGateway.publishMessage(message);
     return message;
   }
@@ -180,14 +211,39 @@ export class ChatController {
       where: {
         id: conversationId,
         OR: [
+          { customerId: userId },
           { customerUser: { id: userId } },
-          { participants: { some: { userId, isActive: true, leftAt: null } } },
+          { customerProfile: { userId } },
+          { counselorId: userId },
+          { providerId: userId },
+          { participants: { some: { userId, isActive: true } } },
         ],
       },
       select: { id: true },
     });
-    if (!conversation)
+    if (!conversation) {
       throw new ForbiddenException('Conversation access denied');
+    }
+
+    await this.prisma.chatParticipant
+      .upsert({
+        where: {
+          sessionId_userId: {
+            sessionId: conversationId,
+            userId,
+          },
+        },
+        update: {
+          isActive: true,
+          leftAt: null,
+        },
+        create: {
+          sessionId: conversationId,
+          userId,
+          isActive: true,
+        },
+      })
+      .catch(() => {});
   }
 
   @Patch('counselor/status')

@@ -4,7 +4,6 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { CreateChatSessionDto } from './dto/create-chatSession.dto';
 import { SendMessageDto } from './dto/send-message.dto';
 import { MessageType, UserRole } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -13,7 +12,11 @@ import { PrismaService } from '../../prisma/prisma.service';
 export class ChatService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async getOrCreateConversation(data: CreateChatSessionDto) {
+  async getOrCreateConversation(data: {
+    serviceId: string;
+    customerProfileId: string;
+    providerId?: string;
+  }) {
     const customerProfile = await this.prisma.customerProfile.findUnique({
       where: {
         id: data.customerProfileId,
@@ -44,32 +47,117 @@ export class ChatService {
         },
       });
 
-      if (session) {
-        return session;
+      // Resolve provider User ID if providerId was supplied (either User ID or ProviderProfile ID)
+      let resolvedProviderUserId: string | null = null;
+      if (data.providerId) {
+        const directUser = await tx.user.findUnique({
+          where: { id: data.providerId },
+          select: { id: true },
+        });
+        if (directUser) {
+          resolvedProviderUserId = directUser.id;
+        } else {
+          const provProfile = await tx.providerProfile.findUnique({
+            where: { id: data.providerId },
+            select: { userId: true },
+          });
+          if (provProfile) {
+            resolvedProviderUserId = provProfile.userId;
+          }
+        }
       }
 
-      const leastLoadedCounselor = await tx.counselorProfile.findFirst({
-        where: {
-          isOnline: true,
-          user: {
-            status: 'ACTIVE',
+      if (session) {
+        // Ensure customer is registered as active participant
+        await tx.chatParticipant.upsert({
+          where: {
+            sessionId_userId: {
+              sessionId: session.id,
+              userId: customerProfile.userId,
+            },
           },
-        },
-        orderBy: {
-          activeChatCount: 'asc',
-        },
-      });
+          update: {
+            isActive: true,
+            leftAt: null,
+          },
+          create: {
+            sessionId: session.id,
+            userId: customerProfile.userId,
+            isActive: true,
+          },
+        });
+
+        if (resolvedProviderUserId) {
+          await tx.chatParticipant.upsert({
+            where: {
+              sessionId_userId: {
+                sessionId: session.id,
+                userId: resolvedProviderUserId,
+              },
+            },
+            update: {
+              isActive: true,
+              leftAt: null,
+            },
+            create: {
+              sessionId: session.id,
+              userId: resolvedProviderUserId,
+              isActive: true,
+            },
+          });
+          if (!session.providerId) {
+            await tx.chatSession.update({
+              where: { id: session.id },
+              data: { providerId: resolvedProviderUserId },
+            });
+          }
+        }
+
+        return tx.chatSession.findUnique({
+          where: { id: session.id },
+          include: {
+            participants: {
+              include: {
+                user: true,
+              },
+            },
+          },
+        });
+      }
+
+      let assignedCounselorId: string | null = null;
+      let assignedProviderId: string | null = resolvedProviderUserId;
+      const flowType = assignedProviderId
+        ? 'CUSTOMER_PROVIDER'
+        : 'CUSTOMER_COUNSELOR';
+
+      if (!assignedProviderId) {
+        const leastLoadedCounselor = await tx.counselorProfile.findFirst({
+          where: {
+            isOnline: true,
+            user: {
+              status: 'ACTIVE',
+            },
+          },
+          orderBy: {
+            activeChatCount: 'asc',
+          },
+        });
+
+        if (leastLoadedCounselor) {
+          assignedCounselorId = leastLoadedCounselor.userId;
+        }
+      }
 
       session = await tx.chatSession.create({
         data: {
           customerId: customerProfile.userId,
           customerProfileId: data.customerProfileId,
           serviceId: data.serviceId,
-          counselorId: leastLoadedCounselor
-            ? leastLoadedCounselor.userId
-            : null,
-          flowType: 'CUSTOMER_COUNSELOR',
-          assignedAt: leastLoadedCounselor ? new Date() : null,
+          counselorId: assignedCounselorId,
+          providerId: assignedProviderId,
+          flowType,
+          assignedAt: assignedCounselorId || assignedProviderId ? new Date() : null,
         },
         include: {
           participants: {
@@ -86,18 +174,18 @@ export class ChatService {
         },
       });
 
-      if (leastLoadedCounselor) {
+      if (assignedCounselorId) {
         await tx.chatParticipant.create({
           data: {
             sessionId: session.id,
-            userId: leastLoadedCounselor.userId,
+            userId: assignedCounselorId,
             isActive: true,
           },
         });
 
-        await tx.counselorProfile.update({
+        await tx.counselorProfile.updateMany({
           where: {
-            id: leastLoadedCounselor.id,
+            userId: assignedCounselorId,
           },
           data: {
             activeChatCount: { increment: 1 },
@@ -105,7 +193,26 @@ export class ChatService {
         });
       }
 
-      return session;
+      if (assignedProviderId) {
+        await tx.chatParticipant.create({
+          data: {
+            sessionId: session.id,
+            userId: assignedProviderId,
+            isActive: true,
+          },
+        });
+      }
+
+      return tx.chatSession.findUnique({
+        where: { id: session.id },
+        include: {
+          participants: {
+            include: {
+              user: true,
+            },
+          },
+        },
+      });
     });
   }
 
@@ -121,6 +228,7 @@ export class ChatService {
       data: { isOnline },
     });
   }
+
   async addParticipant(sessionId: string, userId: string) {
     return this.prisma.chatParticipant.upsert({
       where: {
@@ -145,10 +253,15 @@ export class ChatService {
   }
 
   async saveMessage(senderId: string, dto: SendMessageDto) {
+    const conversationId = dto.conversationId || dto.sessionId;
+    if (!conversationId) {
+      throw new BadRequestException('Conversation ID is required');
+    }
+
     return this.prisma.$transaction(async (tx) => {
       const conversation = await tx.chatSession.findUnique({
         where: {
-          id: dto.conversationId,
+          id: conversationId,
         },
         select: {
           id: true,
@@ -182,8 +295,8 @@ export class ChatService {
       }
 
       const messageType = dto.type ?? MessageType.TEXT;
-      const text = dto.text?.trim();
-      const fileUrl = dto.fileUrl?.trim();
+      const text = dto.text?.trim() || null;
+      const fileUrl = dto.fileUrl?.trim() || null;
 
       if (messageType === MessageType.TEXT && !text) {
         throw new BadRequestException('Text is required');
@@ -204,11 +317,11 @@ export class ChatService {
 
       const message = await tx.message.create({
         data: {
-          sessionId: dto.conversationId,
+          sessionId: conversationId,
           senderId,
-          text: dto.text,
-          fileUrl: dto.fileUrl,
-          type: dto.type,
+          text,
+          fileUrl,
+          type: messageType,
           isSend: true,
         },
         include: {
@@ -225,7 +338,7 @@ export class ChatService {
 
       await tx.chatSession.update({
         where: {
-          id: dto.conversationId,
+          id: conversationId,
         },
         data: {
           updatedAt: new Date(),

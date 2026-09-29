@@ -29,6 +29,14 @@ export class SendMessageDto {
   conversationId!: string;
 
   @ApiPropertyOptional({
+    format: 'uuid',
+    description: 'Alias for conversationId',
+  })
+  @IsUUID()
+  @IsOptional()
+  sessionId?: string;
+
+  @ApiPropertyOptional({
     maxLength: 1000,
     example: 'Hello, I need help with this service.',
   })
@@ -38,13 +46,9 @@ export class SendMessageDto {
   text?: string;
 
   @ApiPropertyOptional({
-    format: 'uri',
     example: 'https://example.com/uploads/file.png',
   })
-  @IsUrl({
-    protocols: ['http', 'https'],
-    require_protocol: true,
-  })
+  @IsString()
   @IsOptional()
   fileUrl?: string;
 
