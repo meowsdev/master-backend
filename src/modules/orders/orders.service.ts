@@ -20,6 +20,22 @@ export class OrdersService {
     await this.assertService(data.serviceId);
     await this.assertTechnician(data.technicianId);
 
+    const existingActiveOrder = await this.prisma.order.findFirst({
+      where: {
+        customerId: data.customerId,
+        serviceId: data.serviceId,
+        orderStatus: {
+          in: ['PENDING', 'ACCEPTED', 'IN_PROGRESS'],
+        },
+      },
+    });
+
+    if (existingActiveOrder) {
+      throw new BadRequestException(
+        `An active order (#${existingActiveOrder.id.slice(0, 8).toUpperCase()}) is already running with status "${existingActiveOrder.orderStatus}". Please complete or cancel the active order first.`,
+      );
+    }
+
     const prices = this.calculatePrices(data);
 
     return this.prisma.order.create({

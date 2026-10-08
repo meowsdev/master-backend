@@ -5,7 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { SendMessageDto } from './dto/send-message.dto';
-import { MessageType, UserRole } from '@prisma/client';
+import { MessageType, PaymentMode, UserRole } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 
 @Injectable()
@@ -166,8 +166,18 @@ export class ChatService {
         },
       });
 
-      await tx.chatParticipant.create({
-        data: {
+      await tx.chatParticipant.upsert({
+        where: {
+          sessionId_userId: {
+            sessionId: session.id,
+            userId: customerProfile.userId,
+          },
+        },
+        update: {
+          isActive: true,
+          leftAt: null,
+        },
+        create: {
           sessionId: session.id,
           userId: customerProfile.userId,
           isActive: true,
@@ -175,8 +185,18 @@ export class ChatService {
       });
 
       if (assignedCounselorId) {
-        await tx.chatParticipant.create({
-          data: {
+        await tx.chatParticipant.upsert({
+          where: {
+            sessionId_userId: {
+              sessionId: session.id,
+              userId: assignedCounselorId,
+            },
+          },
+          update: {
+            isActive: true,
+            leftAt: null,
+          },
+          create: {
             sessionId: session.id,
             userId: assignedCounselorId,
             isActive: true,
@@ -194,8 +214,18 @@ export class ChatService {
       }
 
       if (assignedProviderId) {
-        await tx.chatParticipant.create({
-          data: {
+        await tx.chatParticipant.upsert({
+          where: {
+            sessionId_userId: {
+              sessionId: session.id,
+              userId: assignedProviderId,
+            },
+          },
+          update: {
+            isActive: true,
+            leftAt: null,
+          },
+          create: {
             sessionId: session.id,
             userId: assignedProviderId,
             isActive: true,
@@ -290,8 +320,16 @@ export class ChatService {
         throw new ForbiddenException('SYSTEM messages cannot be sent by users');
       }
 
-      if (dto.type === MessageType.OFFER && sender.role !== UserRole.PROVIDER) {
-        throw new ForbiddenException('Only providers can send offers');
+      if (
+        dto.type === MessageType.OFFER &&
+        sender.role !== UserRole.PROVIDER &&
+        sender.role !== UserRole.COUNSELOR &&
+        sender.role !== UserRole.ADMIN &&
+        sender.role !== UserRole.MANAGER
+      ) {
+        throw new ForbiddenException(
+          'Only providers, counselors, or admins can send offers',
+        );
       }
 
       const messageType = dto.type ?? MessageType.TEXT;
@@ -349,6 +387,187 @@ export class ChatService {
     });
   }
 
+  async createInChatBooking(
+    userId: string,
+    data: {
+      conversationId: string;
+      serviceId: string;
+      providerId?: string;
+      customPrice?: number;
+      addressText?: string;
+      preferredTime?: string;
+      notes?: string;
+      paymentMode?: PaymentMode | string;
+    },
+  ) {
+    return this.prisma.$transaction(async (tx) => {
+      // 1. Get or create customer profile
+      let customerProfile = await tx.customerProfile.findUnique({
+        where: { userId },
+      });
+      if (!customerProfile) {
+        customerProfile = await tx.customerProfile.create({
+          data: { userId },
+        });
+      }
+
+      // 2. Validate service
+      const service = await tx.service.findUnique({
+        where: { id: data.serviceId },
+      });
+      if (!service) {
+        throw new NotFoundException('Service not found');
+      }
+
+      // 2.1 Prevent duplicate active running orders
+      const existingActiveOrder = await tx.order.findFirst({
+        where: {
+          customerId: customerProfile.id,
+          serviceId: service.id,
+          orderStatus: {
+            in: ['PENDING', 'ACCEPTED', 'IN_PROGRESS'],
+          },
+        },
+      });
+
+      if (existingActiveOrder) {
+        throw new BadRequestException(
+          `You already have an active running order (#${existingActiveOrder.id.slice(0, 8).toUpperCase()}) with status "${existingActiveOrder.orderStatus}". Please wait until it is completed or cancel it before placing another order.`,
+        );
+      }
+
+      // 3. Resolve provider profile
+      let providerProfileId: string | null = null;
+      if (data.providerId) {
+        const prov = await tx.providerProfile.findUnique({
+          where: { id: data.providerId },
+          select: { id: true },
+        });
+        if (prov) {
+          providerProfileId = prov.id;
+        } else {
+          const provByUser = await tx.providerProfile.findUnique({
+            where: { userId: data.providerId },
+            select: { id: true },
+          });
+          if (provByUser) providerProfileId = provByUser.id;
+        }
+      }
+
+      // Fallback to first available provider
+      if (!providerProfileId) {
+        const anyProvider = await tx.providerProfile.findFirst({
+          select: { id: true },
+        });
+        if (anyProvider) {
+          providerProfileId = anyProvider.id;
+        } else {
+          const defaultProvUser = await tx.user.findFirst({
+            where: { role: 'PROVIDER' },
+          });
+          if (defaultProvUser) {
+            const newProv = await tx.providerProfile.create({
+              data: { userId: defaultProvUser.id },
+            });
+            providerProfileId = newProv.id;
+          }
+        }
+      }
+
+      if (!providerProfileId) {
+        throw new BadRequestException(
+          'No provider profile available to assign this order.',
+        );
+      }
+
+      const originalPrice = data.customPrice ?? Number(service.basePrice);
+      const totalPrice = originalPrice;
+
+      // 4. Create Order
+      const order = await tx.order.create({
+        data: {
+          customerId: customerProfile.id,
+          providerId: providerProfileId,
+          serviceId: service.id,
+          originalPrice,
+          totalPrice,
+          advancePaid: 0,
+          dueAmount: totalPrice,
+          orderStatus: 'PENDING',
+          paymentStatus: 'UNPAID',
+        },
+        include: {
+          service: true,
+          provider: {
+            include: {
+              user: true,
+            },
+          },
+          customer: {
+            include: {
+              user: true,
+            },
+          },
+        },
+      });
+
+      // 5. Create Order Payment Record
+      await tx.orderPaymentAndTip.create({
+        data: {
+          orderId: order.id,
+          paymentMode: (data.paymentMode as PaymentMode) ?? PaymentMode.CASH,
+          serviceAmountPaid: 0,
+          confirmationStatus: 'PENDING',
+        },
+      });
+
+      // 6. Save automated Confirmation Message in Chat
+      const shortOrderId = order.id.slice(0, 8).toUpperCase();
+      const systemMessageText = JSON.stringify({
+        type: 'ORDER_CONFIRMED',
+        orderId: order.id,
+        shortOrderId,
+        serviceName: service.name,
+        price: totalPrice,
+        address: data.addressText || 'Customer Address',
+        preferredTime: data.preferredTime || 'Today, Fast Dispatch',
+        paymentMode: data.paymentMode ?? 'CASH',
+        status: 'PENDING',
+        warranty: '3-Day Free Warranty Included',
+      });
+
+      const message = await tx.message.create({
+        data: {
+          sessionId: data.conversationId,
+          senderId: userId,
+          text: systemMessageText,
+          type: MessageType.SYSTEM,
+          isSend: true,
+        },
+        include: {
+          sender: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+              role: true,
+            },
+          },
+        },
+      });
+
+      await tx.chatSession.update({
+        where: { id: data.conversationId },
+        data: { updatedAt: new Date() },
+      });
+
+      return {
+        order,
+        message,
+      };
+    });
+  }
+
   async getMessages(sessionId: string, limit = 50, offset = 0) {
     return this.prisma.message.findMany({
       where: {
@@ -372,6 +591,89 @@ export class ChatService {
     });
   }
 
+  async getUserConversations(userId: string) {
+    return this.prisma.chatSession.findMany({
+      where: {
+        OR: [
+          { customerId: userId },
+          { customerUser: { id: userId } },
+          { customerProfile: { userId } },
+          { counselorId: userId },
+          { providerId: userId },
+          { participants: { some: { userId, isActive: true } } },
+        ],
+      },
+      orderBy: {
+        updatedAt: 'desc',
+      },
+      include: {
+        service: {
+          include: {
+            category: true,
+          },
+        },
+        customerUser: {
+          select: {
+            id: true,
+            name: true,
+            mobileNumber: true,
+            profilePhoto: true,
+            role: true,
+          },
+        },
+        counselorUser: {
+          select: {
+            id: true,
+            name: true,
+            mobileNumber: true,
+            profilePhoto: true,
+            role: true,
+          },
+        },
+        providerUser: {
+          select: {
+            id: true,
+            name: true,
+            mobileNumber: true,
+            profilePhoto: true,
+            role: true,
+          },
+        },
+        participants: {
+          include: {
+            user: {
+              select: {
+                id: true,
+                name: true,
+                role: true,
+                status: true,
+              },
+            },
+          },
+        },
+        messages: {
+          orderBy: {
+            createdAt: 'desc',
+          },
+          take: 1,
+          select: {
+            id: true,
+            text: true,
+            type: true,
+            createdAt: true,
+            senderId: true,
+            isRead: true,
+          },
+        },
+        _count: {
+          select: {
+            messages: true,
+          },
+        },
+      },
+    });
+  }
+
   async leaveConversation(sessionId: string, userId: string) {
     return this.prisma.chatParticipant.updateMany({
       where: {
@@ -386,3 +688,4 @@ export class ChatService {
     });
   }
 }
+

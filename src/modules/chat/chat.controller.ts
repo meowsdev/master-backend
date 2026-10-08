@@ -32,6 +32,7 @@ import { ChatGateway } from './chat.gateway';
 import { ChatService } from './chat.service';
 import { CreateChatSessionDto } from './dto/create-chatSession.dto';
 import { SendMessageDto } from './dto/send-message.dto';
+import { InChatBookingDto } from './dto/in-chat-booking.dto';
 
 export class AddChatParticipantDto {
   @ApiProperty({ format: 'uuid' })
@@ -124,6 +125,15 @@ export class ChatController {
     });
   }
 
+  @Get('conversations')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Get all chat conversations for current authenticated user',
+  })
+  async getMyConversations(@Req() req: AuthenticatedRequest) {
+    return this.chatService.getUserConversations(req.user.id);
+  }
+
   @Post('conversations/:conversationId/participants')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
@@ -189,6 +199,24 @@ export class ChatController {
     });
     this.chatGateway.publishMessage(message);
     return message;
+  }
+
+  @Post('orders/in-chat-booking')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({
+    summary: 'Instantly place an order from within the chat conversation',
+  })
+  async createInChatBooking(
+    @Req() req: AuthenticatedRequest,
+    @Body() dto: InChatBookingDto,
+  ) {
+    await this.assertAccess(req.user.id, dto.conversationId);
+    const result = await this.chatService.createInChatBooking(
+      req.user.id,
+      dto,
+    );
+    this.chatGateway.publishMessage(result.message);
+    return result;
   }
 
   @Get('conversations/:conversationId/messages')
