@@ -9,6 +9,7 @@ import {
   ParseUUIDPipe,
   Patch,
   Post,
+  Req,
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
@@ -29,8 +30,8 @@ export class ProviderReviewController {
   @Post()
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({ summary: 'Create or update provider review for order' })
-  create(@Body() data: CreateProviderReviewDto) {
-    return this.providerReviewService.create(data);
+  create(@Req() req: any, @Body() data: CreateProviderReviewDto) {
+    return this.providerReviewService.create(data, req.user?.id);
   }
 
   @Get()

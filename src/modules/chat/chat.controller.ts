@@ -137,44 +137,35 @@ export class ChatController {
   @Post('conversations/:conversationId/participants')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
-    summary: 'Conversation owner adds or reactivates a provider/counselor',
+    summary: 'Conversation participant/counselor adds or reactivates a provider/counselor',
   })
   async addParticipant(
     @Req() req: AuthenticatedRequest,
     @Param('conversationId', new ParseUUIDPipe()) conversationId: string,
     @Body() dto: AddChatParticipantDto,
   ) {
-    const owned = await this.prisma.chatSession.findFirst({
-      where: { id: conversationId, customerProfile: { userId: req.user.id } },
-      select: {
-        id: true,
-        serviceId: true,
-      },
-    });
-    if (!owned)
-      throw new ForbiddenException(
-        'Only the conversation owner can add participants',
-      );
-
-    const participant = await this.prisma.user.findFirst({
-      where: {
-        id: dto.userId,
-        status: 'ACTIVE',
-        role: { in: ['PROVIDER', 'COUNSELOR'] },
-        serviceAssignments: {
-          some: {
-            serviceId: owned.serviceId,
-            isActive: true,
-          },
-        },
-      },
-      select: { id: true },
-    });
-    if (!participant)
-      throw new BadRequestException(
-        'Provider or counselor is not assigned to this service',
-      );
+    await this.assertAccess(req.user.id, conversationId);
     return this.chatService.addParticipant(conversationId, dto.userId);
+  }
+
+  @Post('conversations/:conversationId/assign-provider')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Counselor/Admin/Owner assigns a verified provider to the chat and order',
+  })
+  async assignProvider(
+    @Req() req: AuthenticatedRequest,
+    @Param('conversationId', new ParseUUIDPipe()) conversationId: string,
+    @Body() dto: AddChatParticipantDto,
+  ) {
+    await this.assertAccess(req.user.id, conversationId);
+    const result = await this.chatService.assignProviderToConversation(
+      conversationId,
+      dto.userId,
+      req.user.id,
+    );
+    this.chatGateway.publishMessage(result.message);
+    return result;
   }
 
   @Post('messages')
@@ -235,22 +226,45 @@ export class ChatController {
   }
 
   private async assertAccess(userId: string, conversationId: string) {
-    const conversation = await this.prisma.chatSession.findFirst({
-      where: {
-        id: conversationId,
-        OR: [
-          { customerId: userId },
-          { customerUser: { id: userId } },
-          { customerProfile: { userId } },
-          { counselorId: userId },
-          { providerId: userId },
-          { participants: { some: { userId, isActive: true } } },
-        ],
-      },
-      select: { id: true },
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, role: true },
     });
+
+    const isStaffOrCounselor =
+      user?.role === 'COUNSELOR' ||
+      user?.role === 'ADMIN' ||
+      user?.role === 'MANAGER' ||
+      user?.role === 'SUPPORT';
+
+    const conversation = await this.prisma.chatSession.findFirst({
+      where: isStaffOrCounselor
+        ? { id: conversationId }
+        : {
+            id: conversationId,
+            OR: [
+              { customerId: userId },
+              { customerUser: { id: userId } },
+              { customerProfile: { userId } },
+              { counselorId: userId },
+              { providerId: userId },
+              { participants: { some: { userId, isActive: true } } },
+            ],
+          },
+      select: { id: true, counselorId: true, flowType: true },
+    });
+
     if (!conversation) {
       throw new ForbiddenException('Conversation access denied');
+    }
+
+    if (!conversation.counselorId && user?.role === 'COUNSELOR') {
+      await this.prisma.chatSession
+        .update({
+          where: { id: conversationId },
+          data: { counselorId: userId, assignedAt: new Date() },
+        })
+        .catch(() => {});
     }
 
     await this.prisma.chatParticipant

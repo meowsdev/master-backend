@@ -16,13 +16,15 @@ export class CreateProviderReviewDto {
   @IsUUID()
   orderId!: string;
 
-  @ApiProperty({ format: 'uuid' })
+  @ApiPropertyOptional({ format: 'uuid' })
+  @IsOptional()
   @IsUUID()
-  providerId!: string;
+  providerId?: string;
 
-  @ApiProperty({ format: 'uuid' })
+  @ApiPropertyOptional({ format: 'uuid' })
+  @IsOptional()
   @IsUUID()
-  customerId!: string;
+  customerId?: string;
 
   @ApiProperty({ example: 5, minimum: 1, maximum: 5 })
   @IsInt()

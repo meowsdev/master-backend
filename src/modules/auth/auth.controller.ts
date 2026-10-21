@@ -104,4 +104,15 @@ export class AuthController {
   ) {
     return this.authService.switchProfile(req.user.id, data.role);
   }
+
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({ summary: 'Recharge provider wallet balance' })
+  @UseGuards(JwtAuthGuard)
+  @Post('provider/recharge-wallet')
+  rechargeProviderWallet(
+    @Req() req: { user: { id: string } },
+    @Body('amount') amount: number,
+  ) {
+    return this.authService.rechargeProviderWallet(req.user.id, Number(amount));
+  }
 }

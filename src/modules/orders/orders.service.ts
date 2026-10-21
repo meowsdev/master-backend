@@ -151,9 +151,18 @@ export class OrdersService {
               data: {
                 walletBalance: newBalance,
                 isAvailable: newBalance >= 0,
+                isBlockedForNegative: newBalance < 0,
+                totalCompletedOrders: { increment: 1 },
               },
             });
           }
+        } else {
+          await tx.providerProfile.update({
+            where: { id: order.providerId },
+            data: {
+              totalCompletedOrders: { increment: 1 },
+            },
+          });
         }
       }
 
@@ -189,9 +198,18 @@ export class OrdersService {
               data: {
                 walletBalance: newBalance,
                 isAvailable: newBalance >= 0,
+                isBlockedForNegative: newBalance < 0,
+                totalCompletedOrders: { increment: 1 },
               },
             });
           }
+        } else {
+          await tx.providerProfile.update({
+            where: { id: order.providerId },
+            data: {
+              totalCompletedOrders: { increment: 1 },
+            },
+          });
         }
       }
 
@@ -252,10 +270,13 @@ export class OrdersService {
     advancePaid?: number;
   }) {
     const originalPrice = data.originalPrice;
-    const adminCommission = data.adminCommission ?? 0;
+    const adminCommission =
+      data.adminCommission !== undefined
+        ? data.adminCommission
+        : Math.round(originalPrice * 0.10);
     const additionalPrice = data.additionalPrice ?? 0;
     const advancePaid = data.advancePaid ?? 0;
-    const totalPrice = originalPrice + adminCommission + additionalPrice;
+    const totalPrice = originalPrice + additionalPrice;
     const dueAmount = totalPrice - advancePaid;
 
     if (advancePaid > totalPrice) {

@@ -67,6 +67,52 @@ export class ChatService {
         }
       }
 
+      // Resolve counselor if this is a customer-counselor flow
+      let assignedCounselorId: string | null = null;
+      let assignedProviderId: string | null = resolvedProviderUserId;
+
+      if (!assignedProviderId) {
+        let counselor = await tx.counselorProfile.findFirst({
+          where: {
+            user: {
+              status: 'ACTIVE',
+            },
+          },
+          orderBy: [
+            { isOnline: 'desc' },
+            { activeChatCount: 'asc' },
+          ],
+        });
+
+        if (!counselor) {
+          const counselorUser = await tx.user.findFirst({
+            where: {
+              role: UserRole.COUNSELOR,
+              status: 'ACTIVE',
+            },
+          });
+          if (counselorUser) {
+            counselor = await tx.counselorProfile.upsert({
+              where: { userId: counselorUser.id },
+              update: { isOnline: true },
+              create: {
+                userId: counselorUser.id,
+                isOnline: true,
+                activeChatCount: 0,
+              },
+            });
+          }
+        }
+
+        if (counselor) {
+          assignedCounselorId = counselor.userId;
+        }
+      }
+
+      const flowType = assignedProviderId
+        ? 'CUSTOMER_PROVIDER'
+        : 'CUSTOMER_COUNSELOR';
+
       if (session) {
         // Ensure customer is registered as active participant
         await tx.chatParticipant.upsert({
@@ -86,6 +132,49 @@ export class ChatService {
             isActive: true,
           },
         });
+
+        // Ensure counselor is assigned and registered as participant if missing
+        if (!session.counselorId && assignedCounselorId) {
+          await tx.chatSession.update({
+            where: { id: session.id },
+            data: { counselorId: assignedCounselorId, assignedAt: new Date() },
+          });
+          await tx.chatParticipant.upsert({
+            where: {
+              sessionId_userId: {
+                sessionId: session.id,
+                userId: assignedCounselorId,
+              },
+            },
+            update: {
+              isActive: true,
+              leftAt: null,
+            },
+            create: {
+              sessionId: session.id,
+              userId: assignedCounselorId,
+              isActive: true,
+            },
+          });
+        } else if (session.counselorId) {
+          await tx.chatParticipant.upsert({
+            where: {
+              sessionId_userId: {
+                sessionId: session.id,
+                userId: session.counselorId,
+              },
+            },
+            update: {
+              isActive: true,
+              leftAt: null,
+            },
+            create: {
+              sessionId: session.id,
+              userId: session.counselorId,
+              isActive: true,
+            },
+          });
+        }
 
         if (resolvedProviderUserId) {
           await tx.chatParticipant.upsert({
@@ -123,30 +212,6 @@ export class ChatService {
             },
           },
         });
-      }
-
-      let assignedCounselorId: string | null = null;
-      let assignedProviderId: string | null = resolvedProviderUserId;
-      const flowType = assignedProviderId
-        ? 'CUSTOMER_PROVIDER'
-        : 'CUSTOMER_COUNSELOR';
-
-      if (!assignedProviderId) {
-        const leastLoadedCounselor = await tx.counselorProfile.findFirst({
-          where: {
-            isOnline: true,
-            user: {
-              status: 'ACTIVE',
-            },
-          },
-          orderBy: {
-            activeChatCount: 'asc',
-          },
-        });
-
-        if (leastLoadedCounselor) {
-          assignedCounselorId = leastLoadedCounselor.userId;
-        }
       }
 
       session = await tx.chatSession.create({
@@ -481,6 +546,7 @@ export class ChatService {
       }
 
       const originalPrice = data.customPrice ?? Number(service.basePrice);
+      const adminCommission = Math.round(originalPrice * 0.10);
       const totalPrice = originalPrice;
 
       // 4. Create Order
@@ -490,6 +556,7 @@ export class ChatService {
           providerId: providerProfileId,
           serviceId: service.id,
           originalPrice,
+          adminCommission,
           totalPrice,
           advancePaid: 0,
           dueAmount: totalPrice,
@@ -592,8 +659,31 @@ export class ChatService {
   }
 
   async getUserConversations(userId: string) {
-    return this.prisma.chatSession.findMany({
-      where: {
+    const currentUser = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, role: true },
+    });
+
+    const isCounselor = currentUser?.role === UserRole.COUNSELOR;
+    const isAdminOrStaff =
+      currentUser?.role === UserRole.ADMIN ||
+      currentUser?.role === UserRole.MANAGER ||
+      currentUser?.role === UserRole.SUPPORT;
+
+    let whereClause: any;
+
+    if (isAdminOrStaff) {
+      whereClause = {};
+    } else if (isCounselor) {
+      whereClause = {
+        OR: [
+          { counselorId: userId },
+          { participants: { some: { userId, isActive: true } } },
+          { flowType: 'CUSTOMER_COUNSELOR' },
+        ],
+      };
+    } else {
+      whereClause = {
         OR: [
           { customerId: userId },
           { customerUser: { id: userId } },
@@ -602,7 +692,11 @@ export class ChatService {
           { providerId: userId },
           { participants: { some: { userId, isActive: true } } },
         ],
-      },
+      };
+    }
+
+    return this.prisma.chatSession.findMany({
+      where: whereClause,
       orderBy: {
         updatedAt: 'desc',
       },
@@ -687,5 +781,156 @@ export class ChatService {
       },
     });
   }
+
+  async assignProviderToConversation(
+    conversationId: string,
+    providerIdentifier: string,
+    assignedByUserId: string,
+  ) {
+    return this.prisma.$transaction(async (tx) => {
+      const session = await tx.chatSession.findUnique({
+        where: { id: conversationId },
+        include: {
+          service: true,
+          customerProfile: { include: { user: true } },
+        },
+      });
+
+      if (!session) {
+        throw new NotFoundException('Conversation not found');
+      }
+
+      // 1. Resolve Provider User and Profile
+      let providerUser = await tx.user.findFirst({
+        where: {
+          id: providerIdentifier,
+          role: 'PROVIDER',
+          status: 'ACTIVE',
+        },
+        include: { providerProfile: true },
+      });
+
+      if (!providerUser) {
+        const byProfile = await tx.providerProfile.findUnique({
+          where: { id: providerIdentifier },
+          include: { user: true },
+        });
+        if (byProfile?.user) {
+          providerUser = { ...byProfile.user, providerProfile: byProfile };
+        }
+      }
+
+      if (!providerUser) {
+        throw new BadRequestException('Active provider not found');
+      }
+
+      let providerProfile = providerUser.providerProfile;
+      if (!providerProfile) {
+        providerProfile = await tx.providerProfile.create({
+          data: {
+            userId: providerUser.id,
+            isAvailable: true,
+            rating: 5.0,
+            experienceYears: 3,
+          },
+        });
+      }
+
+      // 2. Ensure Service Assignee
+      await tx.serviceAssignee.upsert({
+        where: {
+          userId_serviceId: {
+            userId: providerUser.id,
+            serviceId: session.serviceId,
+          },
+        },
+        update: { isActive: true },
+        create: {
+          userId: providerUser.id,
+          serviceId: session.serviceId,
+          isActive: true,
+        },
+      });
+
+      // 3. Update Chat Session
+      const updatedSession = await tx.chatSession.update({
+        where: { id: conversationId },
+        data: {
+          providerId: providerUser.id,
+          updatedAt: new Date(),
+        },
+      });
+
+      // 4. Register Provider as Active Chat Participant
+      await tx.chatParticipant.upsert({
+        where: {
+          sessionId_userId: {
+            sessionId: conversationId,
+            userId: providerUser.id,
+          },
+        },
+        update: {
+          isActive: true,
+          leftAt: null,
+        },
+        create: {
+          sessionId: conversationId,
+          userId: providerUser.id,
+          isActive: true,
+        },
+      });
+
+      // 5. Update Any Active Order for this Customer & Service
+      const activeOrder = await tx.order.findFirst({
+        where: {
+          customerId: session.customerProfileId,
+          serviceId: session.serviceId,
+          orderStatus: {
+            in: ['PENDING', 'ACCEPTED', 'IN_PROGRESS'],
+          },
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+
+      if (activeOrder) {
+        await tx.order.update({
+          where: { id: activeOrder.id },
+          data: {
+            providerId: providerProfile.id,
+          },
+        });
+      }
+
+      // 6. Post Confirmation Message in Chat
+      const providerName = providerUser.name || providerUser.mobileNumber;
+      const message = await tx.message.create({
+        data: {
+          sessionId: conversationId,
+          senderId: assignedByUserId,
+          text: `👨‍🔧 Verified Provider "${providerName}" has been assigned to this consultation & order. Provider will arrive according to the schedule.`,
+          type: MessageType.SYSTEM,
+          isSend: true,
+        },
+        include: {
+          sender: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+              role: true,
+            },
+          },
+        },
+      });
+
+      return {
+        session: updatedSession,
+        provider: providerUser,
+        message,
+        orderId: activeOrder?.id,
+      };
+    });
+  }
 }
+
 

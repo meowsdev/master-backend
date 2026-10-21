@@ -13,10 +13,34 @@ import {
 export class ProviderReviewService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async create(data: CreateProviderReviewDto) {
-    await this.assertOrder(data.orderId);
-    await this.assertProvider(data.providerId);
-    await this.assertCustomer(data.customerId);
+  async create(data: CreateProviderReviewDto, userId?: string) {
+    const order = await this.prisma.order.findUnique({
+      where: { id: data.orderId },
+    });
+    if (!order) throw new BadRequestException('Order not found');
+
+    const providerId = data.providerId || order.providerId;
+    let customerId = data.customerId || order.customerId;
+
+    if (!customerId && userId) {
+      const customer = await this.prisma.customerProfile.findUnique({
+        where: { userId },
+        select: { id: true },
+      });
+      if (customer) {
+        customerId = customer.id;
+      }
+    }
+
+    if (!providerId) {
+      throw new BadRequestException('Provider ID is required');
+    }
+    if (!customerId) {
+      throw new BadRequestException('Customer ID is required');
+    }
+
+    await this.assertProvider(providerId);
+    await this.assertCustomer(customerId);
 
     const isPositive = data.customerRating >= 4;
     const isPublic = isPositive;
@@ -29,13 +53,22 @@ export class ProviderReviewService {
       const review = await tx.providerReview.upsert({
         where: { orderId: data.orderId },
         update: {
-          ...data,
+          customerRating: data.customerRating,
+          providerRating: data.providerRating,
+          reviewComment: data.reviewComment,
+          providerId,
+          customerId,
           isPublic,
           moderationStatus,
           continueWithProvider,
         },
         create: {
-          ...data,
+          orderId: data.orderId,
+          providerId,
+          customerId,
+          customerRating: data.customerRating,
+          providerRating: data.providerRating,
+          reviewComment: data.reviewComment,
           isPublic,
           moderationStatus,
           continueWithProvider,
@@ -46,8 +79,8 @@ export class ProviderReviewService {
       if (!isPositive) {
         await tx.activeChatSlot.updateMany({
           where: {
-            providerId: data.providerId,
-            customerId: data.customerId,
+            providerId,
+            customerId,
             status: { in: ['ACTIVE', 'PAUSED'] },
           },
           data: {
@@ -57,8 +90,8 @@ export class ProviderReviewService {
 
         await tx.customerRetention.updateMany({
           where: {
-            providerId: data.providerId,
-            customerId: data.customerId,
+            providerId,
+            customerId,
           },
           data: {
             isChatActive: false,
@@ -68,7 +101,7 @@ export class ProviderReviewService {
       } else {
         const agg = await tx.providerReview.aggregate({
           where: {
-            providerId: data.providerId,
+            providerId,
             isPublic: true,
             moderationStatus: 'APPROVED',
           },
@@ -79,7 +112,7 @@ export class ProviderReviewService {
 
         if (agg._avg.customerRating !== null) {
           await tx.providerProfile.update({
-            where: { id: data.providerId },
+            where: { id: providerId },
             data: {
               rating: Number(agg._avg.customerRating.toFixed(2)),
             },

@@ -3,6 +3,7 @@ import {
   HttpException,
   HttpStatus,
   Injectable,
+  NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
@@ -50,19 +51,9 @@ export class AuthService {
     private readonly redisService: RedisService,
   ) {}
 
-  private async checkOtpRateLimit(key: string) {
-    const count = await this.redisService.incr(key);
-
-    if (count === 1) {
-      await this.redisService.expire(key, REQUEST_WINDOW_MINUTES * 60);
-    }
-
-    if (count > MAX_REQUESTS_PER_WINDOW) {
-      throw new HttpException(
-        `Too many requests. Please try again after ${REQUEST_WINDOW_MINUTES} minutes`,
-        HttpStatus.TOO_MANY_REQUESTS,
-      );
-    }
+  private async checkOtpRateLimit(_key: string) {
+    // Rate limit disabled as requested
+    return;
   }
 
   async requestOtp(data: RequestOtpDto, ip?: string) {
@@ -326,6 +317,11 @@ export class AuthService {
             experienceYears: true,
             isAvailable: true,
             rating: true,
+            totalCompletedOrders: true,
+            level: true,
+            monthlyEarnings: true,
+            walletBalance: true,
+            isBlockedForNegative: true,
             createdAt: true,
             updatedAt: true,
           },
@@ -539,6 +535,34 @@ export class AuthService {
     return {
       message: 'Logged Out Successfully',
     };
+  }
+
+  async rechargeProviderWallet(userId: string, amount: number) {
+    if (amount <= 0) {
+      throw new BadRequestException('Recharge amount must be greater than zero');
+    }
+
+    const provider = await this.prisma.providerProfile.findUnique({
+      where: { userId },
+    });
+
+    if (!provider) {
+      throw new NotFoundException('Provider profile not found');
+    }
+
+    const currentBalance = Number(provider.walletBalance);
+    const newBalance = currentBalance + amount;
+    const isBlockedForNegative = newBalance < 0;
+
+    await this.prisma.providerProfile.update({
+      where: { id: provider.id },
+      data: {
+        walletBalance: newBalance,
+        isBlockedForNegative,
+      },
+    });
+
+    return this.getMe(userId);
   }
 
   private async revokeAllRefreshTokens(userId: string) {
