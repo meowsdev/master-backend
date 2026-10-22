@@ -168,8 +168,10 @@ export class AuthService {
       );
     }
 
-    if (user.role !== UserRole.TECHNICIAN && !user.technicianProfile) {
-      throw new UnauthorizedException('User is not authorized as a technician');
+    if (user.role !== UserRole.TECHNICIAN) {
+      throw new UnauthorizedException(
+        `This phone number is registered as ${user.role}. Each phone number can only have one role and cannot be used as a technician.`,
+      );
     }
 
     await this.prisma.technicianProfile.upsert({
@@ -183,17 +185,12 @@ export class AuthService {
       },
     });
 
-    if (
-      user.status !== 'ACTIVE' ||
-      !user.isVerified ||
-      user.role !== UserRole.TECHNICIAN
-    ) {
+    if (user.status !== 'ACTIVE' || !user.isVerified) {
       user = await this.prisma.user.update({
         where: { id: user.id },
         data: {
           status: 'ACTIVE',
           isVerified: true,
-          role: UserRole.TECHNICIAN,
         },
         include: {
           technicianProfile: true,
@@ -243,7 +240,14 @@ export class AuthService {
       }
     }
 
-    const role = data.role || user.role;
+    // Strict single role constraint: A phone number cannot have more than one role
+    if (user.name && data.role && data.role !== user.role) {
+      throw new BadRequestException(
+        `A single phone number cannot have more than one role. This phone number is already registered as ${user.role}.`,
+      );
+    }
+
+    const role = user.name ? user.role : (data.role || user.role);
 
     await this.prisma.$transaction(async (tx) => {
       await tx.user.update({
@@ -269,28 +273,22 @@ export class AuthService {
       throw new BadRequestException('Invalid role specified');
     }
 
-    await this.prisma.$transaction(async (tx) => {
-      await tx.user.update({
-        where: { id: userId },
-        data: { role },
-      });
-
-      await this.ensureProfile(tx, userId, role);
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
     });
 
-    const me = await this.getMe(userId);
-    if (!me) throw new BadRequestException('User not found');
+    if (!user) {
+      throw new BadRequestException('User not found');
+    }
 
-    const tokens = await this.issueTokenPair({
-      id: me.id,
-      mobileNumber: me.mobileNumber,
-      role: me.role,
-    });
+    // Strict single role constraint: A single phone number can never have more than one role
+    if (user.role !== role) {
+      throw new BadRequestException(
+        `A single phone number cannot have more than one role. This account is permanently registered as ${user.role}.`,
+      );
+    }
 
-    return {
-      ...me,
-      ...tokens,
-    };
+    return this.getMe(userId);
   }
 
   async getMe(userId: string) {
@@ -352,23 +350,8 @@ export class AuthService {
 
     if (!user) return null;
 
-    const availableRoles: UserRole[] = [];
-    if (user.customerProfile) availableRoles.push(UserRole.CUSTOMER);
-    if (user.providerProfile) availableRoles.push(UserRole.PROVIDER);
-    if (user.counselorProfile) availableRoles.push(UserRole.COUNSELOR);
-    if (user.technicianProfile) availableRoles.push(UserRole.TECHNICIAN);
-    const staffRoles: UserRole[] = [
-      UserRole.ADMIN,
-      UserRole.MANAGER,
-      UserRole.HR,
-      UserRole.SUPPORT,
-    ];
-    if (staffRoles.includes(user.role)) {
-      availableRoles.push(user.role);
-    }
-    if (!availableRoles.includes(user.role)) {
-      availableRoles.push(user.role);
-    }
+    // Strict single role constraint: Each phone number has only its single assigned role
+    const availableRoles: UserRole[] = [user.role];
 
     return {
       ...user,
