@@ -20,9 +20,12 @@ export class OrdersService {
     await this.assertService(data.serviceId);
     await this.assertTechnician(data.technicianId);
 
+    // Authoritative backend validation: Block duplicate active orders for the SAME service.
+    // Different services can have concurrent active orders simultaneously.
     const existingActiveOrder = await this.prisma.order.findFirst({
       where: {
         customerId: data.customerId,
+        serviceId: data.serviceId,
         orderStatus: {
           in: ['PENDING', 'ACCEPTED', 'IN_PROGRESS'],
         },
@@ -37,7 +40,7 @@ export class OrdersService {
         ? ` for "${existingActiveOrder.service.name}"`
         : '';
       throw new BadRequestException(
-        `An active order (#${existingActiveOrder.id.slice(0, 8).toUpperCase()})${serviceName} is already running with status "${existingActiveOrder.orderStatus}". You cannot place a new order until the running order is completed or cancelled.`,
+        `An active order (#${existingActiveOrder.id.slice(0, 8).toUpperCase()})${serviceName} is already running with status "${existingActiveOrder.orderStatus}". You cannot place another order for this same service until the current order is completed or cancelled.`,
       );
     }
 
