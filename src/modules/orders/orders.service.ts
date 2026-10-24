@@ -23,16 +23,21 @@ export class OrdersService {
     const existingActiveOrder = await this.prisma.order.findFirst({
       where: {
         customerId: data.customerId,
-        serviceId: data.serviceId,
         orderStatus: {
           in: ['PENDING', 'ACCEPTED', 'IN_PROGRESS'],
         },
       },
+      include: {
+        service: true,
+      },
     });
 
     if (existingActiveOrder) {
+      const serviceName = existingActiveOrder.service?.name
+        ? ` for "${existingActiveOrder.service.name}"`
+        : '';
       throw new BadRequestException(
-        `An active order (#${existingActiveOrder.id.slice(0, 8).toUpperCase()}) is already running with status "${existingActiveOrder.orderStatus}". Please complete or cancel the active order first.`,
+        `An active order (#${existingActiveOrder.id.slice(0, 8).toUpperCase()})${serviceName} is already running with status "${existingActiveOrder.orderStatus}". You cannot place a new order until the running order is completed or cancelled.`,
       );
     }
 
