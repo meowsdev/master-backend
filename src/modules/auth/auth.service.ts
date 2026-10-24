@@ -255,8 +255,12 @@ export class AuthService {
           id: userid,
         },
         data: {
-          name: data.fullName || user.name,
-          email: data.email || user.email,
+          name: data.fullName !== undefined ? data.fullName : user.name,
+          email: data.email !== undefined ? data.email : user.email,
+          profilePhoto:
+            data.profilePhoto !== undefined
+              ? data.profilePhoto
+              : user.profilePhoto,
           role,
         },
       });

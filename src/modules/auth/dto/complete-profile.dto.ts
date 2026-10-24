@@ -20,6 +20,14 @@ export class CompleteProfileDto {
   fullName?: string;
 
   @ApiPropertyOptional({
+    example: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb',
+    description: 'User profile photo URL.',
+  })
+  @IsOptional()
+  @IsString()
+  profilePhoto?: string;
+
+  @ApiPropertyOptional({
     enum: UserRole,
     example: UserRole.CUSTOMER,
     description: 'User role. A matching profile will be created automatically.',
