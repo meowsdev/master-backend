@@ -36,15 +36,27 @@ export class ServiceRevisionService {
       orderComplitionTime + threeDaysInMillis,
     );
 
-    return this.prisma.serviceRevision.create({
-      data: {
-        orderId: data.orderId,
-        issueDescription: data.issueDescription,
-        attachedImages: data.attachedImages ?? [],
-        revisionStatus: data.revisionStatus ?? 'REQUESTED',
-        warrantyExpiresAt: data.warrantyExpiresAt ?? defaultWarrentyExpiresAt,
-      },
-      include: { order: true },
+    return this.prisma.$transaction(async (tx) => {
+      const revision = await tx.serviceRevision.create({
+        data: {
+          orderId: data.orderId,
+          issueDescription: data.issueDescription,
+          attachedImages: data.attachedImages ?? [],
+          revisionStatus: data.revisionStatus ?? 'REQUESTED',
+          warrantyExpiresAt: data.warrantyExpiresAt ?? defaultWarrentyExpiresAt,
+        },
+        include: { order: true },
+      });
+
+      // Transition order back to IN_PROGRESS so provider must complete again
+      await tx.order.update({
+        where: { id: data.orderId },
+        data: {
+          orderStatus: 'IN_PROGRESS',
+        },
+      });
+
+      return revision;
     });
   }
 

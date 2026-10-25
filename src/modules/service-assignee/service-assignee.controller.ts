@@ -9,15 +9,23 @@ import {
   ParseUUIDPipe,
   Patch,
   Post,
+  Req,
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import {
   CreateServiceAssigneeDto,
+  SyncMySkillsDto,
   UpdateServiceAssigneeDto,
 } from './dto/service-assignee.dto';
 import { ServiceAssigneeService } from './service-assignee.service';
+
+interface AuthenticatedRequest {
+  user: {
+    id: string;
+  };
+}
 
 @ApiTags('Service Assignee')
 @ApiBearerAuth('JWT-auth')
@@ -33,6 +41,23 @@ export class ServiceAssigneeController {
   @ApiOperation({ summary: 'Assign a user to a service' })
   create(@Body() data: CreateServiceAssigneeDto) {
     return this.serviceAssigneeService.create(data);
+  }
+
+  @Post('sync-my-skills')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Sync active skills for current authenticated provider' })
+  syncMySkills(
+    @Req() req: AuthenticatedRequest,
+    @Body() data: SyncMySkillsDto,
+  ) {
+    return this.serviceAssigneeService.syncMySkills(req.user.id, data.serviceIds || []);
+  }
+
+  @Get('my-skills')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Get assigned skills for current authenticated provider' })
+  getMySkills(@Req() req: AuthenticatedRequest) {
+    return this.serviceAssigneeService.findByUser(req.user.id);
   }
 
   @Get()

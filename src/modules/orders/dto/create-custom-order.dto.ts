@@ -2,19 +2,21 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsNumber, IsOptional, IsUUID, Min } from 'class-validator';
 
 export class CreateCustomOrderDto {
-  @ApiProperty({
+  @ApiPropertyOptional({
     format: 'uuid',
     example: '6e7f4f75-d1dc-49eb-90ad-854d8fe363d0',
   })
+  @IsOptional()
   @IsUUID()
-  providerId!: string;
+  providerId?: string;
 
-  @ApiProperty({
+  @ApiPropertyOptional({
     format: 'uuid',
     example: '87af2a7b-8d14-4f6e-a2d9-469d5f51855e',
   })
+  @IsOptional()
   @IsUUID()
-  customerId!: string;
+  customerId?: string;
 
   @ApiPropertyOptional({
     format: 'uuid',

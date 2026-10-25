@@ -1,30 +1,131 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { UserRole } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateCustomOrderDto } from './dto/create-custom-order.dto';
 import {
   UpdateOrderDto,
   UpdateOrderStatusDto,
 } from './dto/update-order-status.dto';
+import {
+  ORDER_RELATIONS_INCLUDE,
+  calculateOrderPrices,
+  handleCommissionBalance,
+  assertProvider,
+  assertCustomer,
+  assertService,
+  assertTechnician,
+} from './orders.helpers';
 
 @Injectable()
 export class OrdersService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async create(data: CreateCustomOrderDto) {
-    await this.assertProvider(data.providerId);
-    await this.assertCustomer(data.customerId);
-    await this.assertService(data.serviceId);
-    await this.assertTechnician(data.technicianId);
+  async create(data: CreateCustomOrderDto, user?: { id: string; role: UserRole }) {
+    await assertService(this.prisma, data.serviceId);
+
+    // 1. Resolve Customer ID from input or authenticated session
+    let customerId = data.customerId;
+    if (!customerId && user) {
+      const customer = await this.prisma.customerProfile.findUnique({
+        where: { userId: user.id },
+        select: { id: true },
+      });
+      if (!customer) {
+        const createdCustomer = await this.prisma.customerProfile.create({
+          data: { userId: user.id },
+          select: { id: true },
+        });
+        customerId = createdCustomer.id;
+      } else {
+        customerId = customer.id;
+      }
+    }
+
+    if (!customerId) {
+      throw new BadRequestException('Customer profile is required to place an order');
+    }
+    await assertCustomer(this.prisma, customerId);
+
+    // 2. Skill Match Engine: Find active provider who has selected this service skill
+    let providerId = data.providerId;
+    if (!providerId) {
+      // Find active provider with this skill, prioritizing other providers over the current customer
+      const assignee = await this.prisma.serviceAssignee.findFirst({
+        where: {
+          serviceId: data.serviceId,
+          isActive: true,
+          user: {
+            role: UserRole.PROVIDER,
+            status: 'ACTIVE',
+            ...(user?.id ? { id: { not: user.id } } : {}),
+            providerProfile: {
+              isAvailable: true,
+              isBlockedForNegative: false,
+            },
+          },
+        },
+        include: {
+          user: {
+            include: {
+              providerProfile: true,
+            },
+          },
+        },
+      });
+
+      if (assignee?.user?.providerProfile?.id) {
+        providerId = assignee.user.providerProfile.id;
+      } else {
+        // Fallback: Pick any active, available provider with role PROVIDER
+        const fallbackProvider = await this.prisma.providerProfile.findFirst({
+          where: {
+            isAvailable: true,
+            isBlockedForNegative: false,
+            user: {
+              role: UserRole.PROVIDER,
+              status: 'ACTIVE',
+              ...(user?.id ? { id: { not: user.id } } : {}),
+            },
+          },
+          select: { id: true },
+        });
+
+        if (fallbackProvider) {
+          providerId = fallbackProvider.id;
+        } else {
+          // Final fallback to any active provider with role PROVIDER
+          const anyProvider = await this.prisma.providerProfile.findFirst({
+            where: {
+              user: {
+                role: UserRole.PROVIDER,
+                status: 'ACTIVE',
+              },
+            },
+            select: { id: true },
+          });
+          if (!anyProvider) {
+            throw new BadRequestException(
+              'Currently no service provider is available for this service. Please try again shortly.',
+            );
+          }
+          providerId = anyProvider.id;
+        }
+      }
+    }
+
+    await assertProvider(this.prisma, providerId);
+    await assertTechnician(this.prisma, data.technicianId);
 
     // Authoritative backend validation: Block duplicate active orders for the SAME service.
     // Different services can have concurrent active orders simultaneously.
     const existingActiveOrder = await this.prisma.order.findFirst({
       where: {
-        customerId: data.customerId,
+        customerId,
         serviceId: data.serviceId,
         orderStatus: {
           in: ['PENDING', 'ACCEPTED', 'IN_PROGRESS'],
@@ -44,32 +145,97 @@ export class OrdersService {
       );
     }
 
-    const prices = this.calculatePrices(data);
+    const prices = calculateOrderPrices(data);
 
     return this.prisma.order.create({
       data: {
-        providerId: data.providerId,
-        customerId: data.customerId,
+        providerId,
+        customerId,
         technicianId: data.technicianId,
         serviceId: data.serviceId,
         ...prices,
       },
-      include: this.includeRelations(),
+      include: ORDER_RELATIONS_INCLUDE,
     });
   }
+
 
   findAll() {
     return this.prisma.order.findMany({
       orderBy: { createdAt: 'desc' },
-      include: this.includeRelations(),
+      include: ORDER_RELATIONS_INCLUDE,
     });
+  }
+
+  async findAllForUser(user: { id: string; role: UserRole }, activeRole?: UserRole) {
+    const effectiveRole = activeRole || user.role;
+
+    if (effectiveRole === UserRole.PROVIDER) {
+      let provider = await this.prisma.providerProfile.findUnique({
+        where: { userId: user.id },
+        select: { id: true },
+      });
+      if (!provider) {
+        provider = await this.prisma.providerProfile.create({
+          data: { userId: user.id, isAvailable: true, isBlockedForNegative: false },
+          select: { id: true },
+        });
+      }
+
+      // Fetch active service skills for this provider
+      const mySkills = await this.prisma.serviceAssignee.findMany({
+        where: { userId: user.id, isActive: true },
+        select: { serviceId: true },
+      });
+      const skillServiceIds = mySkills.map((s) => s.serviceId);
+
+      // Return both assigned orders and open pending job dispatches matching provider skills
+      return this.prisma.order.findMany({
+        where: {
+          OR: [
+            { providerId: provider.id },
+            {
+              orderStatus: 'PENDING',
+              ...(skillServiceIds.length > 0 ? { serviceId: { in: skillServiceIds } } : {}),
+            },
+          ],
+        },
+        orderBy: { createdAt: 'desc' },
+        include: ORDER_RELATIONS_INCLUDE,
+      });
+    }
+
+    if (effectiveRole === UserRole.TECHNICIAN) {
+      const technician = await this.prisma.technicianProfile.findUnique({
+        where: { userId: user.id },
+        select: { id: true },
+      });
+      if (!technician) return [];
+      return this.prisma.order.findMany({
+        where: { technicianId: technician.id },
+        orderBy: { createdAt: 'desc' },
+        include: ORDER_RELATIONS_INCLUDE,
+      });
+    }
+
+    if (effectiveRole === UserRole.CUSTOMER) {
+      const customer = await this.prisma.customerProfile.findUnique({
+        where: { userId: user.id },
+        select: { id: true },
+      });
+      if (!customer) return [];
+      return this.findByCustomer(customer.id);
+    }
+
+    // Platform Staff (ADMIN, MANAGER, SUPPORT, HR) can oversee all orders
+    return this.findAll();
   }
 
   findByProvider(providerId: string) {
     return this.prisma.order.findMany({
       where: { providerId },
       orderBy: { createdAt: 'desc' },
-      include: this.includeRelations(),
+      include: ORDER_RELATIONS_INCLUDE,
     });
   }
 
@@ -77,14 +243,14 @@ export class OrdersService {
     return this.prisma.order.findMany({
       where: { customerId },
       orderBy: { createdAt: 'desc' },
-      include: this.includeRelations(),
+      include: ORDER_RELATIONS_INCLUDE,
     });
   }
 
   async findOne(id: string) {
     const order = await this.prisma.order.findUnique({
       where: { id },
-      include: this.includeRelations(),
+      include: ORDER_RELATIONS_INCLUDE,
     });
 
     if (!order) {
@@ -94,9 +260,33 @@ export class OrdersService {
     return order;
   }
 
+  async findOneForUser(id: string, user: { id: string; role: UserRole }) {
+    const order = await this.findOne(id);
+
+    if (
+      user.role === UserRole.ADMIN ||
+      user.role === UserRole.MANAGER ||
+      user.role === UserRole.SUPPORT
+    ) {
+      return order;
+    }
+
+    const isOwner = order.customer?.user?.id === user.id;
+    const isAssignedProvider = order.provider?.user?.id === user.id;
+    const isAssignedTech = order.technician?.user?.id === user.id;
+
+    if (!isOwner && !isAssignedProvider && !isAssignedTech) {
+      throw new ForbiddenException(
+        'Access denied: You are not authorized to view or manage this order',
+      );
+    }
+
+    return order;
+  }
+
   async update(id: string, data: UpdateOrderDto) {
     const order = await this.findOne(id);
-    await this.assertTechnician(data.technicianId);
+    await assertTechnician(this.prisma, data.technicianId);
 
     const isPriceEdited =
       data.originalPrice !== undefined ||
@@ -116,7 +306,7 @@ export class OrdersService {
       data.additionalPrice ?? Number(order.additionalPrice);
     const advancePaid = data.advancePaid ?? Number(order.advancePaid);
 
-    const prices = this.calculatePrices({
+    const prices = calculateOrderPrices({
       originalPrice,
       adminCommission,
       additionalPrice,
@@ -131,48 +321,12 @@ export class OrdersService {
           orderStatus: data.orderStatus,
           paymentStatus: data.paymentStatus,
           ...prices,
-          priceEditCount:
-            data.originalPrice !== undefined ||
-            data.adminCommission !== undefined ||
-            data.additionalPrice !== undefined
-              ? { increment: 1 }
-              : undefined,
+          priceEditCount: isPriceEdited ? { increment: 1 } : undefined,
         },
-        include: this.includeRelations(),
+        include: ORDER_RELATIONS_INCLUDE,
       });
 
-      if (
-        data.orderStatus === 'COMPLETED' &&
-        order.orderStatus !== 'COMPLETED'
-      ) {
-        const commission = Number(order.adminCommission || 0);
-        if (commission > 0) {
-          const provider = await tx.providerProfile.findUnique({
-            where: { id: order.providerId },
-            select: { id: true, walletBalance: true },
-          });
-
-          if (provider) {
-            const newBalance = Number(provider.walletBalance) - commission;
-            await tx.providerProfile.update({
-              where: { id: order.providerId },
-              data: {
-                walletBalance: newBalance,
-                isAvailable: newBalance >= 0,
-                isBlockedForNegative: newBalance < 0,
-                totalCompletedOrders: { increment: 1 },
-              },
-            });
-          }
-        } else {
-          await tx.providerProfile.update({
-            where: { id: order.providerId },
-            data: {
-              totalCompletedOrders: { increment: 1 },
-            },
-          });
-        }
-      }
+      await handleCommissionBalance(tx, order, data.orderStatus);
 
       return updatedOrder;
     });
@@ -182,47 +336,74 @@ export class OrdersService {
     const order = await this.findOne(id);
 
     return this.prisma.$transaction(async (tx) => {
+      if (data.orderStatus === 'COMPLETED') {
+        await tx.serviceRevision.updateMany({
+          where: {
+            orderId: id,
+            revisionStatus: { in: ['REQUESTED', 'ACCEPTED'] },
+          },
+          data: {
+            revisionStatus: 'COMPLETED',
+          },
+        });
+      }
+
       const updatedOrder = await tx.order.update({
         where: { id },
-        data,
-        include: this.includeRelations(),
+        data: {
+          orderStatus: data.orderStatus,
+        },
+        include: ORDER_RELATIONS_INCLUDE,
       });
 
-      if (
-        data.orderStatus === 'COMPLETED' &&
-        order.orderStatus !== 'COMPLETED'
-      ) {
-        const commission = Number(order.adminCommission || 0);
-        if (commission > 0) {
-          const provider = await tx.providerProfile.findUnique({
-            where: { id: order.providerId },
-            select: { id: true, walletBalance: true },
-          });
-
-          if (provider) {
-            const newBalance = Number(provider.walletBalance) - commission;
-            await tx.providerProfile.update({
-              where: { id: order.providerId },
-              data: {
-                walletBalance: newBalance,
-                isAvailable: newBalance >= 0,
-                isBlockedForNegative: newBalance < 0,
-                totalCompletedOrders: { increment: 1 },
-              },
-            });
-          }
-        } else {
-          await tx.providerProfile.update({
-            where: { id: order.providerId },
-            data: {
-              totalCompletedOrders: { increment: 1 },
-            },
-          });
-        }
-      }
+      await handleCommissionBalance(tx, order, data.orderStatus);
 
       return updatedOrder;
     });
+  }
+
+  async updateStatusForUser(
+    id: string,
+    data: UpdateOrderStatusDto,
+    user: { id: string; role: UserRole },
+  ) {
+    const order = await this.findOne(id);
+
+    // If a provider is accepting/starting work on a PENDING job:
+    if (
+      (user.role === UserRole.PROVIDER || user.role === UserRole.TECHNICIAN) &&
+      order.orderStatus === 'PENDING' &&
+      (data.orderStatus === 'IN_PROGRESS' || data.orderStatus === 'ACCEPTED')
+    ) {
+      let provider = await this.prisma.providerProfile.findUnique({
+        where: { userId: user.id },
+        select: { id: true },
+      });
+      if (!provider) {
+        provider = await this.prisma.providerProfile.create({
+          data: { userId: user.id, isAvailable: true, isBlockedForNegative: false },
+          select: { id: true },
+        });
+      }
+
+      return this.prisma.$transaction(async (tx) => {
+        const updatedOrder = await tx.order.update({
+          where: { id },
+          data: {
+            providerId: provider.id,
+            orderStatus: data.orderStatus,
+          },
+          include: ORDER_RELATIONS_INCLUDE,
+        });
+
+        await handleCommissionBalance(tx, order, data.orderStatus);
+        return updatedOrder;
+      });
+    }
+
+    // Assert authorization before executing other status changes
+    await this.findOneForUser(id, user);
+    return this.updateStatus(id, data);
   }
 
   async remove(id: string) {
@@ -237,14 +418,14 @@ export class OrdersService {
 
   async acceptPrice(id: string) {
     const order = await this.findOne(id);
-    await this.assertProvider(order.providerId);
+    await assertProvider(this.prisma, order.providerId);
 
     return this.prisma.order.update({
       where: { id },
       data: {
         orderStatus: 'IN_PROGRESS',
       },
-      include: this.includeRelations(),
+      include: ORDER_RELATIONS_INCLUDE,
     });
   }
 
@@ -255,7 +436,7 @@ export class OrdersService {
     const adminCommission = Number(order.adminCommission);
     const advancePaid = Number(order.advancePaid);
 
-    const prices = this.calculatePrices({
+    const prices = calculateOrderPrices({
       originalPrice,
       adminCommission,
       additionalPrice: 0,
@@ -267,137 +448,7 @@ export class OrdersService {
       data: {
         ...prices,
       },
-      include: this.includeRelations(),
+      include: ORDER_RELATIONS_INCLUDE,
     });
-  }
-
-  private calculatePrices(data: {
-    originalPrice: number;
-    adminCommission?: number;
-    additionalPrice?: number;
-    advancePaid?: number;
-  }) {
-    const originalPrice = data.originalPrice;
-    const adminCommission =
-      data.adminCommission !== undefined
-        ? data.adminCommission
-        : Math.round(originalPrice * 0.10);
-    const additionalPrice = data.additionalPrice ?? 0;
-    const advancePaid = data.advancePaid ?? 0;
-    const totalPrice = originalPrice + additionalPrice;
-    const dueAmount = totalPrice - advancePaid;
-
-    if (advancePaid > totalPrice) {
-      throw new BadRequestException('Advance paid cannot exceed total price');
-    }
-
-    return {
-      originalPrice,
-      adminCommission,
-      additionalPrice,
-      totalPrice,
-      advancePaid,
-      dueAmount,
-    };
-  }
-
-  private includeRelations() {
-    return {
-      provider: {
-        include: {
-          user: {
-            select: {
-              id: true,
-              name: true,
-              mobileNumber: true,
-              role: true,
-              status: true,
-            },
-          },
-        },
-      },
-      customer: {
-        include: {
-          user: {
-            select: {
-              id: true,
-              name: true,
-              mobileNumber: true,
-              role: true,
-              status: true,
-            },
-          },
-        },
-      },
-      technician: {
-        include: {
-          user: {
-            select: {
-              id: true,
-              name: true,
-              mobileNumber: true,
-              role: true,
-              status: true,
-            },
-          },
-        },
-      },
-      service: true,
-      paymentAndTip: true,
-      revisions: true,
-      providerReview: true,
-    };
-  }
-
-  private async assertProvider(providerId: string) {
-    const provider = await this.prisma.providerProfile.findUnique({
-      where: { id: providerId },
-      select: { id: true, walletBalance: true },
-    });
-
-    if (!provider) {
-      throw new BadRequestException('Provider profile not found');
-    }
-
-    if (Number(provider.walletBalance) < 0) {
-      throw new BadRequestException(
-        `Provider has a negative wallet balance (${provider.walletBalance.toString()} BDT). Account is locked from accepting new orders until wallet is recharged.`,
-      );
-    }
-  }
-
-  private async assertCustomer(customerId: string) {
-    const customer = await this.prisma.customerProfile.findUnique({
-      where: { id: customerId },
-      select: { id: true },
-    });
-
-    if (!customer) {
-      throw new BadRequestException('Customer profile not found');
-    }
-  }
-
-  private async assertService(serviceId: string) {
-    const service = await this.prisma.service.findFirst({
-      where: { id: serviceId, isActive: true, isDeleted: false },
-      select: { id: true },
-    });
-
-    if (!service) {
-      throw new BadRequestException('Service is unavailable');
-    }
-  }
-
-  private async assertTechnician(technicianId?: string) {
-    if (!technicianId) return;
-
-    const technician = await this.prisma.technicianProfile.findUnique({
-      where: { id: technicianId },
-      select: { id: true },
-    });
-
-    if (!technician) {
-      throw new BadRequestException('Technician profile not found');
-    }
   }
 }

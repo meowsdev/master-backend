@@ -9,9 +9,11 @@ import {
   ParseUUIDPipe,
   Patch,
   Post,
+  Req,
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { UserRole } from '@prisma/client';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CreateCustomOrderDto } from './dto/create-custom-order.dto';
 import {
@@ -19,6 +21,13 @@ import {
   UpdateOrderStatusDto,
 } from './dto/update-order-status.dto';
 import { OrdersService } from './orders.service';
+
+interface AuthenticatedRequest {
+  user: {
+    id: string;
+    role: UserRole;
+  };
+}
 
 @ApiTags('Orders')
 @ApiBearerAuth('JWT-auth')
@@ -29,16 +38,20 @@ export class OrdersController {
 
   @Post()
   @HttpCode(HttpStatus.CREATED)
-  @ApiOperation({ summary: 'Create order' })
-  create(@Body() data: CreateCustomOrderDto) {
-    return this.ordersService.create(data);
+  @ApiOperation({ summary: 'Create order with auto skill-matched provider' })
+  create(
+    @Body() data: CreateCustomOrderDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.ordersService.create(data, req.user);
   }
 
   @Get()
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Get all orders' })
-  findAll() {
-    return this.ordersService.findAll();
+  @ApiOperation({ summary: 'Get orders filtered by user role' })
+  findAll(@Req() req: AuthenticatedRequest & { headers: Record<string, string | undefined> }) {
+    const activeRole = req.headers['x-active-role'] as UserRole | undefined;
+    return this.ordersService.findAllForUser(req.user, activeRole);
   }
 
   @Get('provider/:providerId')
@@ -58,8 +71,11 @@ export class OrdersController {
   @Get(':id')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Get order by id' })
-  findOne(@Param('id', new ParseUUIDPipe()) id: string) {
-    return this.ordersService.findOne(id);
+  findOne(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.ordersService.findOneForUser(id, req.user);
   }
 
   @Patch(':id')
@@ -78,8 +94,9 @@ export class OrdersController {
   updateStatus(
     @Param('id', new ParseUUIDPipe()) id: string,
     @Body() data: UpdateOrderStatusDto,
+    @Req() req: AuthenticatedRequest,
   ) {
-    return this.ordersService.updateStatus(id, data);
+    return this.ordersService.updateStatusForUser(id, data, req.user);
   }
 
   @Delete(':id')

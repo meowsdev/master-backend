@@ -153,6 +153,50 @@ export class ServiceAssigneeService {
     });
   }
 
+  async syncMySkills(userId: string, serviceIds: string[]) {
+    await this.assertAssignableUser(userId);
+
+    if (serviceIds.length > 0) {
+      const validServices = await this.prisma.service.findMany({
+        where: { id: { in: serviceIds }, isActive: true, isDeleted: false },
+        select: { id: true },
+      });
+      const validIds = new Set(validServices.map((s) => s.id));
+      serviceIds = serviceIds.filter((id) => validIds.has(id));
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      await tx.serviceAssignee.deleteMany({
+        where: {
+          userId,
+          serviceId: { notIn: serviceIds },
+        },
+      });
+
+      for (const serviceId of serviceIds) {
+        await tx.serviceAssignee.upsert({
+          where: {
+            userId_serviceId: {
+              userId,
+              serviceId,
+            },
+          },
+          update: { isActive: true },
+          create: {
+            userId,
+            serviceId,
+            isActive: true,
+          },
+        });
+      }
+
+      return tx.serviceAssignee.findMany({
+        where: { userId, isActive: true },
+        include: { service: true },
+      });
+    });
+  }
+
   private async assertAssignableUser(userId: string) {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
