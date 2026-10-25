@@ -4,7 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { UserRole } from '@prisma/client';
+import { UserRole, OrderStatus } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateCustomOrderDto } from './dto/create-custom-order.dto';
 import {
@@ -189,16 +189,19 @@ export class OrdersService {
       });
       const skillServiceIds = mySkills.map((s) => s.serviceId);
 
-      // Return both assigned orders and open pending job dispatches matching provider skills
+      // Strict Rule: If provider has 0 active skills, they receive ZERO pending job dispatches
+      const whereConditions: any[] = [{ providerId: provider.id }];
+      if (skillServiceIds.length > 0) {
+        whereConditions.push({
+          orderStatus: OrderStatus.PENDING,
+          serviceId: { in: skillServiceIds },
+        });
+      }
+
+      // Return assigned orders and open pending job dispatches strictly matching provider skills
       return this.prisma.order.findMany({
         where: {
-          OR: [
-            { providerId: provider.id },
-            {
-              orderStatus: 'PENDING',
-              ...(skillServiceIds.length > 0 ? { serviceId: { in: skillServiceIds } } : {}),
-            },
-          ],
+          OR: whereConditions,
         },
         orderBy: { createdAt: 'desc' },
         include: ORDER_RELATIONS_INCLUDE,
