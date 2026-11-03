@@ -251,13 +251,26 @@ export class OrdersService {
   }
 
   async findOne(id: string) {
-    const order = await this.prisma.order.findUnique({
+    // Robust ID resolution: Try full UUID first, then look for short ID match
+    let order = await this.prisma.order.findUnique({
       where: { id },
       include: ORDER_RELATIONS_INCLUDE,
     });
 
+    if (!order && id.length === 8) {
+      // If it looks like a short ID, try to find by prefix
+      order = await this.prisma.order.findFirst({
+        where: {
+          id: {
+            startsWith: id.toLowerCase(),
+          },
+        },
+        include: ORDER_RELATIONS_INCLUDE,
+      });
+    }
+
     if (!order) {
-      throw new NotFoundException('Order not found');
+      throw new NotFoundException(`Order with ID "${id}" not found`);
     }
 
     return order;
@@ -339,6 +352,7 @@ export class OrdersService {
     const order = await this.findOne(id);
 
     return this.prisma.$transaction(async (tx) => {
+      // PERMANENT FIX: If order is being completed, close all associated pending revisions
       if (data.orderStatus === 'COMPLETED') {
         await tx.serviceRevision.updateMany({
           where: {
