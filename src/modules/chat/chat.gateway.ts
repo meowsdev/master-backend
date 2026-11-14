@@ -16,6 +16,11 @@ import { IsInt, IsOptional, IsUUID, Max, Min } from 'class-validator';
 import { Namespace, Socket } from 'socket.io';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RedisService } from '../../redis/redis.service';
+import { getAccessSecret, getFrontendOrigins } from '../auth/auth.config';
+import {
+  ACCESS_COOKIE,
+  readCookieFromHeader,
+} from '../auth/auth-cookies.util';
 import { ChatService } from './chat.service';
 import { SendMessageDto } from './dto/send-message.dto';
 
@@ -42,7 +47,18 @@ export class MessageHistoryDto extends ConversationRoomDto {
   namespace: '/chat',
   maxHttpBufferSize: 64 * 1024,
   cors: {
-    origin: true,
+    // Cookie auth makes cross-site WebSocket hijacking possible, so only the
+    // configured frontend origins are allowed (any origin when unset, in dev).
+    origin: (
+      requestOrigin: string | undefined,
+      callback: (error: Error | null, allow?: boolean) => void,
+    ) => {
+      const allowed = getFrontendOrigins();
+      callback(
+        null,
+        allowed.length === 0 || !requestOrigin || allowed.includes(requestOrigin),
+      );
+    },
     credentials: true,
   },
 })
@@ -102,18 +118,21 @@ export class ChatGateway
     const query = (client.handshake.query || {}) as { token?: unknown };
     const headers = client.handshake.headers || {};
 
+    // Browsers authenticate with the httpOnly access_token cookie; the
+    // explicit handshake token remains for non-browser / legacy clients.
     const supplied =
-      auth.token ?? query.token ?? headers.authorization ?? headers.token;
+      auth.token ??
+      query.token ??
+      headers.authorization ??
+      headers.token ??
+      readCookieFromHeader(headers.cookie, ACCESS_COOKIE);
 
     if (typeof supplied !== 'string' || !supplied.trim()) {
       throw new WsException('Unauthorized: No access token supplied');
     }
 
     const token = supplied.replace(/^Bearer\s+/i, '').trim();
-    const secret =
-      this.config.get<string>('JWT_SECRET') ||
-      process.env.JWT_SECRET ||
-      'secret';
+    const secret = getAccessSecret();
 
     if (!token || !secret) {
       throw new WsException('Unauthorized: Invalid token configuration');

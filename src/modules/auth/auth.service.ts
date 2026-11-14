@@ -1,34 +1,18 @@
 import {
   BadRequestException,
-  HttpException,
-  HttpStatus,
   Injectable,
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
-import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RequestOtpDto } from './dto/request-otp.dto';
-import {
-  generateOtpCode,
-  hashOtpCode,
-  MAX_REQUESTS_PER_WINDOW,
-  MAX_VERIFY_ATTEMPTS,
-  OTP_EXPIRY_MINUTES,
-  REQUEST_WINDOW_MINUTES,
-} from './otp.util';
+import { OtpService } from './otp.service';
+import { getOtpConfig } from './otp.config';
 import { VerifyOtpDto } from './dto/verify-otp.dto';
 import { CompleteProfileDto } from './dto/complete-profile.dto';
 import { TechnicianLoginDto } from './dto/technician-login.dto';
-import { RedisService } from '../../redis/redis.service';
 import { UserRole } from '@prisma/client';
-
-import {
-  ACCESS_TOKEN_EXPIRY_SECONDS,
-  generateRefreshToken,
-  hashToken,
-  REFRESH_TOKEN_EXPIRY_DAYS,
-} from './token.util';
+import { SessionContext, SessionsService } from './sessions.service';
 
 const USER_SELECT = {
   id: true,
@@ -47,73 +31,29 @@ const USER_SELECT = {
 export class AuthService {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly jwtService: JwtService,
-    private readonly redisService: RedisService,
+    private readonly sessions: SessionsService,
+    private readonly otp: OtpService,
   ) {}
 
-  private async checkOtpRateLimit(_key: string) {
-    // Rate limit disabled as requested
-    return;
-  }
-
   async requestOtp(data: RequestOtpDto, ip?: string) {
-    const phoneRateKey = `otp:rate:phone:${data.phoneNumber}`;
-    const ipRateKey = `otp:rate:ip:${ip ?? 'unknown'}`;
+    const sent = await this.otp.send(data.phoneNumber, ip);
 
-    await this.checkOtpRateLimit(phoneRateKey);
-    await this.checkOtpRateLimit(ipRateKey);
-
-    const code = generateOtpCode();
-    const otpKey = `otp:${data.phoneNumber}`;
-
-    await this.redisService.set(
-      otpKey,
-      hashOtpCode(code),
-      OTP_EXPIRY_MINUTES * 60,
-    );
-
-    console.log(`OTP for ${data.phoneNumber}: ${code}`);
+    // Same response whether or not an account exists for this number.
+    const { exposeCode } = getOtpConfig();
+    if (exposeCode) console.log(`OTP for ${data.phoneNumber}: ${sent.code}`);
 
     return {
       message: 'OTP sent successfully',
       phoneNumber: data.phoneNumber,
-      expiresInSeconds: OTP_EXPIRY_MINUTES * 60,
-      code,
+      expiresInSeconds: sent.expiresInSeconds,
+      retryAfterSeconds: sent.retryAfterSeconds,
+      nextAllowedAt: sent.nextAllowedAt,
+      ...(exposeCode ? { code: sent.code } : {}),
     };
   }
 
-  async verifyOtp(data: VerifyOtpDto) {
-    const otpKey = `otp:${data.phoneNumber}`;
-    const attemptKey = `otp:attempts:${data.phoneNumber}`;
-    const savedOtp = await this.redisService.get(otpKey);
-
-    if (!savedOtp) {
-      throw new BadRequestException(
-        'OTP expired or not requested. Please request a new one.',
-      );
-    }
-
-    const isMatch = savedOtp === hashOtpCode(data.code);
-    if (!isMatch) {
-      const attempts = await this.redisService.incr(attemptKey);
-
-      if (attempts === 1) {
-        await this.redisService.expire(attemptKey, OTP_EXPIRY_MINUTES * 60);
-      }
-
-      if (attempts >= MAX_VERIFY_ATTEMPTS) {
-        await this.redisService.del(otpKey);
-        await this.redisService.del(attemptKey);
-        throw new BadRequestException(
-          'Too many incorrect attempts. Please request a new OTP.',
-        );
-      }
-
-      throw new BadRequestException('Invalid OTP');
-    }
-
-    await this.redisService.del(otpKey);
-    await this.redisService.del(attemptKey);
+  async verifyOtp(data: VerifyOtpDto, ctx: SessionContext = {}) {
+    await this.otp.verify(data.phoneNumber, data.code);
 
     const user = await this.prisma.user.upsert({
       where: {
@@ -131,22 +71,14 @@ export class AuthService {
       select: USER_SELECT,
     });
 
-    // const accessToken = await this.jwtService.signAsync({
-    //   sub: user.id,
-    //   mobileNumber: user.mobileNumber,
-    //   role: user.role,
-    // });
-    const tokens = await this.issueTokenPair(user);
+    const tokens = await this.sessions.createSession(user, ctx);
     return {
       user,
-      ...tokens,
+      tokens,
     };
   }
 
-  async technicianLogin(
-    data: TechnicianLoginDto,
-    ctx: { userAgent?: string; ipAddress?: string } = {},
-  ) {
+  async technicianLogin(data: TechnicianLoginDto, ctx: SessionContext = {}) {
     const validPassword = process.env.TECHNICIAN_DEFAULT_PASSWORD || '123456';
 
     if (data.password !== validPassword) {
@@ -198,7 +130,7 @@ export class AuthService {
       });
     }
 
-    const tokens = await this.issueTokenPair(user, ctx);
+    const tokens = await this.sessions.createSession(user, ctx);
 
     return {
       user: {
@@ -213,7 +145,9 @@ export class AuthService {
         createdAt: user.createdAt,
         updatedAt: user.updatedAt,
       },
-      ...tokens,
+      // Technician login keeps the legacy body-token response.
+      accessToken: tokens.accessToken,
+      refreshToken: tokens.refreshToken,
     };
   }
 
@@ -247,7 +181,7 @@ export class AuthService {
       );
     }
 
-    const role = user.name ? user.role : (data.role || user.role);
+    const role = user.name ? user.role : data.role || user.role;
 
     await this.prisma.$transaction(async (tx) => {
       await tx.user.update({
@@ -416,117 +350,11 @@ export class AuthService {
     }
   }
 
-  private async issueTokenPair(
-    user: { id: string; mobileNumber: string; role: string },
-    ctx: { userAgent?: string; ipAddress?: string } = {},
-  ) {
-    const accessToken = await this.jwtService.signAsync({
-      sub: user.id,
-      mobileNumber: user.mobileNumber,
-      role: user.role,
-    });
-
-    const rawRefreshToken = generateRefreshToken();
-
-    const expiresAt = new Date(
-      Date.now() + REFRESH_TOKEN_EXPIRY_DAYS * 24 * 60 * 60 * 1000,
-    );
-
-    await this.prisma.refreshToken.create({
-      data: {
-        userId: user.id,
-        tokenHash: hashToken(rawRefreshToken),
-        expiresAt,
-        userAgent: ctx.userAgent,
-        ipAddress: ctx.ipAddress,
-      },
-    });
-
-    return {
-      accessToken,
-      refreshToken: rawRefreshToken,
-    };
-  }
-  async refreshToken(
-    rawToken: string,
-    ctx: { userAgent?: string; ipAddress?: string } = {},
-  ) {
-    const tokenHash = hashToken(rawToken);
-
-    const existing = await this.prisma.refreshToken.findUnique({
-      where: {
-        tokenHash,
-      },
-      include: {
-        user: true,
-      },
-    });
-
-    if (!existing) {
-      throw new UnauthorizedException('Invalid Refresh Token');
-    }
-
-    if (existing.revokedAt) {
-      await this.revokeAllRefreshTokens(existing.userId);
-      throw new UnauthorizedException(
-        'Token reuse detected, all sessions revoked. Please login again.',
-      );
-    }
-
-    if (existing.expiresAt < new Date()) {
-      throw new UnauthorizedException(
-        'Refresh token expired, please login again',
-      );
-    }
-
-    await this.prisma.refreshToken.update({
-      where: {
-        id: existing.id,
-      },
-      data: {
-        revokedAt: new Date(),
-      },
-    });
-
-    return this.issueTokenPair(
-      {
-        id: existing.user.id,
-        mobileNumber: existing.user.mobileNumber,
-        role: existing.user.role,
-      },
-      ctx,
-    );
-  }
-
-  async logout(rawToken: string, accessToken?: string) {
-    const tokenHash = hashToken(rawToken);
-
-    await this.prisma.refreshToken.updateMany({
-      where: {
-        tokenHash,
-        revokedAt: null,
-      },
-      data: {
-        revokedAt: new Date(),
-      },
-    });
-
-    if (accessToken) {
-      await this.redisService.set(
-        `auth:blacklist:access:${accessToken}`,
-        '1',
-        ACCESS_TOKEN_EXPIRY_SECONDS,
-      );
-    }
-
-    return {
-      message: 'Logged Out Successfully',
-    };
-  }
-
   async rechargeProviderWallet(userId: string, amount: number) {
     if (amount <= 0) {
-      throw new BadRequestException('Recharge amount must be greater than zero');
+      throw new BadRequestException(
+        'Recharge amount must be greater than zero',
+      );
     }
 
     const provider = await this.prisma.providerProfile.findUnique({
@@ -550,17 +378,5 @@ export class AuthService {
     });
 
     return this.getMe(userId);
-  }
-
-  private async revokeAllRefreshTokens(userId: string) {
-    await this.prisma.refreshToken.updateMany({
-      where: {
-        userId,
-        revokedAt: null,
-      },
-      data: {
-        revokedAt: new Date(),
-      },
-    });
   }
 }

@@ -2,14 +2,26 @@ import {
   Body,
   Controller,
   Get,
-  Headers,
+  HttpCode,
   Patch,
   Post,
   Req,
+  Res,
+  UnauthorizedException,
+  UseFilters,
   UseGuards,
 } from '@nestjs/common';
 import type * as express from 'express';
 import { AuthService } from './auth.service';
+import { OtpThrottledFilter } from './otp-throttled.exception';
+import { SessionsService } from './sessions.service';
+import {
+  clearAuthCookies,
+  extractAccessToken,
+  readCookie,
+  REFRESH_COOKIE,
+  setAuthCookies,
+} from './auth-cookies.util';
 import { RequestOtpDto } from './dto/request-otp.dto';
 import { VerifyOtpDto } from './dto/verify-otp.dto';
 import {
@@ -24,18 +36,36 @@ import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 @ApiTags('Auth')
 @Controller('auth')
 export class AuthController {
-  constructor(private readonly authService: AuthService) {}
+  constructor(
+    private readonly authService: AuthService,
+    private readonly sessions: SessionsService,
+  ) {}
 
   @ApiOperation({ summary: 'Request Otp Via Phone Number' })
+  @UseFilters(OtpThrottledFilter)
   @Post('request-otp')
   requestOtp(@Body() data: RequestOtpDto, @Req() req: express.Request) {
     const ip = req.ip;
     return this.authService.requestOtp(data, ip);
   }
 
+  @ApiOperation({
+    summary: 'Verify OTP and start a cookie session',
+    description:
+      'Sets httpOnly access_token and refresh_token cookies; tokens are not returned in the body.',
+  })
   @Post('verify-otp')
-  verifyOtp(@Body() data: VerifyOtpDto) {
-    return this.authService.verifyOtp(data);
+  async verifyOtp(
+    @Body() data: VerifyOtpDto,
+    @Req() req: express.Request,
+    @Res({ passthrough: true }) res: express.Response,
+  ) {
+    const { user, tokens } = await this.authService.verifyOtp(data, {
+      userAgent: req.headers['user-agent'],
+      ipAddress: req.ip,
+    });
+    setAuthCookies(res, tokens);
+    return { user };
   }
 
   @ApiOperation({ summary: 'Technician direct password login' })
@@ -50,21 +80,71 @@ export class AuthController {
     });
   }
 
+  @ApiOperation({
+    summary: 'Rotate the refresh token and issue a new token pair',
+    description:
+      'Reads the refresh_token cookie (or a legacy body token). Every call returns a new access and refresh token, each valid for a fresh full lifetime.',
+  })
+  @HttpCode(200)
   @Post('refresh')
-  refresh(@Body() data: RefreshTokenDto, @Req() req: express.Request) {
-    return this.authService.refreshToken(data.refreshToken, {
+  async refresh(
+    @Body() data: RefreshTokenDto,
+    @Req() req: express.Request,
+    @Res({ passthrough: true }) res: express.Response,
+  ) {
+    const cookieToken = readCookie(req, REFRESH_COOKIE);
+    const presentedToken = cookieToken ?? data.refreshToken;
+    if (!presentedToken) {
+      throw new UnauthorizedException('Session expired, please login again');
+    }
+
+    const tokens = await this.sessions.rotate(presentedToken, {
       userAgent: req.headers['user-agent'],
       ipAddress: req.ip,
     });
+
+    if (cookieToken) {
+      setAuthCookies(res, tokens);
+      return { message: 'Session refreshed' };
+    }
+    return {
+      accessToken: tokens.accessToken,
+      refreshToken: tokens.refreshToken,
+    };
   }
 
+  @ApiOperation({
+    summary: 'Log out of the current session',
+    description:
+      'The only way a session normally ends. Works with an expired access token and always clears both cookies.',
+  })
+  @HttpCode(200)
   @Post('logout')
-  logout(
+  async logout(
     @Body() data: RefreshTokenDto,
-    @Headers('authorization') authorization?: string,
+    @Req() req: express.Request,
+    @Res({ passthrough: true }) res: express.Response,
   ) {
-    const accessToken = authorization?.replace(/^Bearer\s+/i, '').trim();
-    return this.authService.logout(data.refreshToken, accessToken);
+    await this.sessions.logout(
+      readCookie(req, REFRESH_COOKIE) ?? data.refreshToken,
+      extractAccessToken(req),
+    );
+    clearAuthCookies(res);
+    return { message: 'Logged Out Successfully' };
+  }
+
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({ summary: 'Log out of every device' })
+  @UseGuards(JwtAuthGuard)
+  @HttpCode(200)
+  @Post('logout-all')
+  async logoutAll(
+    @Req() req: { user: { id: string } },
+    @Res({ passthrough: true }) res: express.Response,
+  ) {
+    await this.sessions.revokeAllForUser(req.user.id);
+    clearAuthCookies(res);
+    return { message: 'Logged out of all sessions' };
   }
 
   @ApiBearerAuth('JWT-auth')

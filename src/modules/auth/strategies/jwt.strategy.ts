@@ -1,9 +1,11 @@
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { PassportStrategy } from '@nestjs/passport';
-import { ExtractJwt, Strategy } from 'passport-jwt';
+import { Strategy } from 'passport-jwt';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { RedisService } from '../../../redis/redis.service';
 import type * as express from 'express';
+import { getAccessSecret } from '../auth.config';
+import { extractAccessToken } from '../auth-cookies.util';
 
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
@@ -12,8 +14,8 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
     private readonly redisService: RedisService,
   ) {
     super({
-      jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
-      secretOrKey: process.env.JWT_SECRET ?? 'secret',
+      jwtFromRequest: (req: express.Request) => extractAccessToken(req) ?? null,
+      secretOrKey: getAccessSecret(),
       passReqToCallback: true,
     });
   }
@@ -22,8 +24,7 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
     req: express.Request,
     paylode: { sub: string; mobileNumber: string; role: string },
   ) {
-    const authorization = req.headers.authorization;
-    const accessToken = authorization?.replace(/^Bearer\s+/i, '').trim();
+    const accessToken = extractAccessToken(req);
     if (!accessToken) {
       throw new UnauthorizedException('Unauthorized');
     }

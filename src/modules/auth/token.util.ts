@@ -1,11 +1,8 @@
 import { createHash, randomBytes } from 'crypto';
 
-export const REFRESH_TOKEN_EXPIRY_DAYS = 30;
-export const ACCESS_TOKEN_EXPIRY = '15m';
-export const ACCESS_TOKEN_EXPIRY_SECONDS = 15 * 60;
-
+/** Opaque 512-bit refresh token; only its SHA-256 hash is ever stored. */
 export function generateRefreshToken(): string {
-  return randomBytes(40).toString('hex');
+  return randomBytes(64).toString('hex');
 }
 
 export function hashToken(token: string): string {

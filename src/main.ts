@@ -2,6 +2,8 @@ import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { Logger, ValidationPipe } from '@nestjs/common';
 import helmet from 'helmet';
+import cookieParser from 'cookie-parser';
+import { getFrontendOrigins } from './modules/auth/auth.config';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { RedisIoAdapter } from './redis/redis-io.adapter';
 
@@ -11,8 +13,13 @@ async function bootstrap() {
 
   app.use(helmet());
 
+  app.use(cookieParser());
+
+  // Credentialed CORS cannot use a wildcard. When FRONTEND_ORIGINS is unset
+  // (local dev) the request origin is reflected instead.
+  const frontendOrigins = getFrontendOrigins();
   app.enableCors({
-    origin: true,
+    origin: frontendOrigins.length > 0 ? frontendOrigins : true,
     credentials: true,
   });
 
