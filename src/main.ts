@@ -64,7 +64,11 @@ async function bootstrap() {
     );
   }
 
-  await app.listen(process.env.PORT ?? 4500);
+  const port = Number(process.env.PORT ?? 4500);
+  await app.listen(port, '0.0.0.0');
+  logger.log(`Server running on port ${port}`);
+  logger.log(`API:     http://localhost:${port}/api/v1`);
+  logger.log(`Swagger: http://localhost:${port}/api/docs`);
 }
 
 bootstrap().catch((error) => {
