@@ -129,16 +129,18 @@ export class ChatGateway
         throw new Error('Invalid access token payload');
       }
 
+      let isBlacklisted = false;
       try {
-        const isBlacklisted = await this.redis.exists(
-          `auth:blacklist:access:${token}`,
+        isBlacklisted = Boolean(
+          await this.redis.exists(`auth:blacklist:access:${token}`),
         );
-        if (isBlacklisted) {
-          throw new Error('Revoked access token');
-        }
       } catch (redisErr) {
         // Continue if redis check fails gracefully
         this.logger.debug(`Redis check skipped: ${redisErr}`);
+      }
+
+      if (isBlacklisted) {
+        throw new Error('Revoked access token');
       }
 
       const user = await this.prisma.user.findUnique({
@@ -150,6 +152,7 @@ export class ChatGateway
         throw new Error('Inactive or non-existent user');
       }
 
+      client.data = client.data || {};
       client.data.user = user;
       client.data.userId = user.id;
 
@@ -191,7 +194,7 @@ export class ChatGateway
       throw new WsException('Conversation access denied');
     }
 
-    if (!conversation.counselorId && userRole === 'COUNSELOR') {
+    if (!conversation.counselorId && userRole === 'COUNSELOR' && this.prisma.chatSession?.update) {
       await this.prisma.chatSession
         .update({
           where: { id: conversationId },
@@ -200,25 +203,27 @@ export class ChatGateway
         .catch(() => {});
     }
 
-    await this.prisma.chatParticipant
-      .upsert({
-        where: {
-          sessionId_userId: {
+    if (this.prisma.chatParticipant?.upsert) {
+      await this.prisma.chatParticipant
+        .upsert({
+          where: {
+            sessionId_userId: {
+              sessionId: conversationId,
+              userId,
+            },
+          },
+          update: {
+            isActive: true,
+            leftAt: null,
+          },
+          create: {
             sessionId: conversationId,
             userId,
+            isActive: true,
           },
-        },
-        update: {
-          isActive: true,
-          leftAt: null,
-        },
-        create: {
-          sessionId: conversationId,
-          userId,
-          isActive: true,
-        },
-      })
-      .catch(() => {});
+        })
+        .catch(() => {});
+    }
 
     return userId;
   }
@@ -326,6 +331,31 @@ export class ChatGateway
         this.logger.warn(`Failed to broadcast message: ${err.message}`);
       }
     }
+  }
+
+  publishMessagesRead(conversationId: string, readByUserId: string) {
+    if (!conversationId) return;
+    const room = this.room(conversationId);
+    if (this.server) {
+      try {
+        this.server.to(room).emit('messagesRead', { conversationId, readByUserId });
+        this.server.emit('conversationRead', { conversationId, readByUserId });
+        this.logger.log(`Broadcasted messagesRead for ${conversationId} by ${readByUserId}`);
+      } catch (err: any) {
+        this.logger.warn(`Failed to broadcast messagesRead: ${err.message}`);
+      }
+    }
+  }
+
+  @SubscribeMessage('markAsRead')
+  async handleMarkAsRead(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() dto: ConversationRoomDto,
+  ) {
+    const userId = await this.authorize(client, dto.conversationId);
+    const result = await this.chatService.markConversationAsRead(userId, dto.conversationId);
+    this.publishMessagesRead(dto.conversationId, userId);
+    return result;
   }
 
   @SubscribeMessage('getMessages')

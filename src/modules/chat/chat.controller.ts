@@ -130,8 +130,14 @@ export class ChatController {
   @ApiOperation({
     summary: 'Get all chat conversations for current authenticated user',
   })
-  async getMyConversations(@Req() req: AuthenticatedRequest) {
-    return this.chatService.getUserConversations(req.user.id);
+  async getMyConversations(
+    @Req() req: AuthenticatedRequest,
+    @Query('unreadOnly') unreadOnly?: string,
+  ) {
+    return this.chatService.getUserConversations(
+      req.user.id,
+      unreadOnly === 'true',
+    );
   }
 
   @Post('conversations/:conversationId/participants')
@@ -222,7 +228,25 @@ export class ChatController {
       conversationId,
       query.limit,
       query.offset,
+      req.user.id,
     );
+  }
+
+  @Patch('conversations/:conversationId/read')
+  @Post('conversations/:conversationId/read')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Mark all unread incoming messages as read in conversation' })
+  async markAsRead(
+    @Req() req: AuthenticatedRequest,
+    @Param('conversationId', new ParseUUIDPipe()) conversationId: string,
+  ) {
+    await this.assertAccess(req.user.id, conversationId);
+    const result = await this.chatService.markConversationAsRead(
+      req.user.id,
+      conversationId,
+    );
+    this.chatGateway.publishMessagesRead(conversationId, req.user.id);
+    return result;
   }
 
   private async assertAccess(userId: string, conversationId: string) {

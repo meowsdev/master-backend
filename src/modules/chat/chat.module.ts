@@ -1,6 +1,8 @@
 import { Module } from '@nestjs/common';
 import { PrismaModule } from '../../prisma/prisma.module';
 import { ChatService } from './chat.service';
+import { ChatBookingService } from './chat-booking.service';
+import { ChatSessionService } from './chat-session.service';
 import { ConfigModule } from '@nestjs/config';
 import { JwtModule } from '@nestjs/jwt';
 import { RedisModule } from '../../redis/redis.module';
@@ -10,7 +12,7 @@ import { ChatController } from './chat.controller';
 @Module({
   imports: [PrismaModule, ConfigModule, JwtModule.register({}), RedisModule],
   controllers: [ChatController],
-  providers: [ChatService, ChatGateway],
-  exports: [ChatService],
+  providers: [ChatService, ChatBookingService, ChatSessionService, ChatGateway],
+  exports: [ChatService, ChatBookingService, ChatSessionService],
 })
 export class ChatModule {}

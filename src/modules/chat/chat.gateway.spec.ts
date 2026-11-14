@@ -22,7 +22,8 @@ describe('ChatGateway access control', () => {
   };
   const prisma = {
     user: { findUnique: jest.fn() },
-    chatSession: { findFirst: jest.fn() },
+    chatSession: { findFirst: jest.fn(), update: jest.fn() },
+    chatParticipant: { upsert: jest.fn().mockResolvedValue({}) },
   };
   const jwt = { verifyAsync: jest.fn() };
   const redis = { exists: jest.fn() };
@@ -33,8 +34,11 @@ describe('ChatGateway access control', () => {
     redis.exists.mockResolvedValue(0);
     prisma.user.findUnique.mockResolvedValue({ id: userId, status: 'ACTIVE' });
     prisma.chatSession.findFirst.mockResolvedValue({ id: conversationId });
+    prisma.chatSession.update.mockResolvedValue({});
+    prisma.chatParticipant.upsert.mockResolvedValue({});
     client = {
       handshake: { auth: { token: 'access-token' }, headers: {} },
+      data: {},
       ...socketActions,
       rooms: new Set([`conversation:${conversationId}`]),
     } as unknown as Socket;
@@ -49,6 +53,7 @@ describe('ChatGateway access control', () => {
       to: jest.fn().mockReturnValue({
         emit: socketActions.emit,
       }),
+      emit: socketActions.emit,
       // sockets: new Map([['client', client]]),
     } as unknown as Namespace;
   });
