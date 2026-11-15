@@ -1,6 +1,14 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { UserRole } from '@prisma/client';
-import { IsEmail, IsEnum, IsOptional, IsString } from 'class-validator';
+import { Type } from 'class-transformer';
+import {
+  IsEmail,
+  IsEnum,
+  IsInt,
+  IsOptional,
+  IsString,
+  Matches,
+} from 'class-validator';
 
 export class CompleteProfileDto {
   @ApiPropertyOptional({
@@ -18,6 +26,34 @@ export class CompleteProfileDto {
   @IsOptional()
   @IsString()
   fullName?: string;
+
+  @ApiPropertyOptional({
+    example: 'monir_hosin',
+    description:
+      'Unique handle: 3-20 characters, lowercase letters, digits and underscore.',
+  })
+  @IsOptional()
+  @IsString()
+  @Matches(/^[a-z0-9_]{3,20}$/, {
+    message:
+      'username must be 3-20 characters: lowercase letters, digits or underscore',
+  })
+  username?: string;
+
+  @ApiPropertyOptional({ example: 47, description: 'District id (optional). null clears the location.' })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  districtId?: number | null;
+
+  @ApiPropertyOptional({
+    example: 330,
+    description: 'Upazila id. Must belong to districtId.',
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  upazilaId?: number | null;
 
   @ApiPropertyOptional({
     example: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb',

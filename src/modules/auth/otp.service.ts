@@ -10,7 +10,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const IP_WINDOW_SECONDS = 60 * 60;
 
 export interface OtpSendResult {
-  /** Plaintext code: only populated when OTP_EXPOSE_CODE=true (dev). */
+  /** Plaintext code. Callers must never return or log it outside development. */
   code: string;
   expiresInSeconds: number;
   retryAfterSeconds: number;

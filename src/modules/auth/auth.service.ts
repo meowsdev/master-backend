@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   Injectable,
+  Logger,
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
@@ -13,12 +14,18 @@ import { CompleteProfileDto } from './dto/complete-profile.dto';
 import { TechnicianLoginDto } from './dto/technician-login.dto';
 import { UserRole } from '@prisma/client';
 import { SessionContext, SessionsService } from './sessions.service';
+import { LocationsService } from '../locations/locations.service';
+
+const USERNAME_PATTERN = /^[a-z0-9_]{3,20}$/;
 
 const USER_SELECT = {
   id: true,
   mobileNumber: true,
   email: true,
   name: true,
+  username: true,
+  districtId: true,
+  upazilaId: true,
   profilePhoto: true,
   role: true,
   status: true,
@@ -29,18 +36,25 @@ const USER_SELECT = {
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly sessions: SessionsService,
     private readonly otp: OtpService,
+    private readonly locations: LocationsService,
   ) {}
 
   async requestOtp(data: RequestOtpDto, ip?: string) {
     const sent = await this.otp.send(data.phoneNumber, ip);
 
     // Same response whether or not an account exists for this number.
-    const { exposeCode } = getOtpConfig();
-    if (exposeCode) console.log(`OTP for ${data.phoneNumber}: ${sent.code}`);
+    const { exposeCode, logCodeToConsole } = getOtpConfig();
+    if (logCodeToConsole) {
+      this.logger.warn(
+        `[DEV ONLY] OTP for ${data.phoneNumber}: ${sent.code} (valid ${sent.expiresInSeconds}s)`,
+      );
+    }
 
     return {
       message: 'OTP sent successfully',
@@ -181,6 +195,51 @@ export class AuthService {
       );
     }
 
+    // A brand-new account (no name yet) needs a name and a username.
+    // The location is optional.
+    if (!user.name) {
+      const missing = (
+        [
+          ['fullName', data.fullName],
+          ['username', data.username],
+        ] as const
+      )
+        .filter(([, value]) => value === undefined || value === '')
+        .map(([field]) => field);
+      if (missing.length > 0) {
+        throw new BadRequestException(
+          `Missing required fields: ${missing.join(', ')}`,
+        );
+      }
+    }
+
+    if (data.username !== undefined) {
+      const isTaken = await this.isUsernameTaken(data.username, userid);
+      if (isTaken) throw new BadRequestException('Username already taken');
+    }
+
+    // Location is optional, but district and upazila go together: both set
+    // (and a real pair), or both null to clear it.
+    const isClearingLocation =
+      data.districtId === null && data.upazilaId === null;
+    if (!isClearingLocation) {
+      const hasDistrict = data.districtId != null;
+      const hasUpazila = data.upazilaId != null;
+      if (hasDistrict !== hasUpazila) {
+        throw new BadRequestException(
+          'Send districtId and upazilaId together',
+        );
+      }
+      if (
+        hasDistrict &&
+        !this.locations.isValidLocation(data.districtId!, data.upazilaId!)
+      ) {
+        throw new BadRequestException(
+          'Upazila does not belong to the district',
+        );
+      }
+    }
+
     const role = user.name ? user.role : data.role || user.role;
 
     await this.prisma.$transaction(async (tx) => {
@@ -190,6 +249,11 @@ export class AuthService {
         },
         data: {
           name: data.fullName !== undefined ? data.fullName : user.name,
+          username: data.username !== undefined ? data.username : user.username,
+          districtId:
+            data.districtId !== undefined ? data.districtId : user.districtId,
+          upazilaId:
+            data.upazilaId !== undefined ? data.upazilaId : user.upazilaId,
           email: data.email !== undefined ? data.email : user.email,
           profilePhoto:
             data.profilePhoto !== undefined
@@ -202,6 +266,26 @@ export class AuthService {
     });
 
     return this.getMe(userid);
+  }
+
+  /** Public check behind the sign-up form's username tick. */
+  async checkUsername(username: string) {
+    const normalized = (username ?? '').trim();
+    if (!USERNAME_PATTERN.test(normalized)) {
+      return { available: false, reason: 'INVALID' as const };
+    }
+    const isTaken = await this.isUsernameTaken(normalized);
+    return isTaken
+      ? { available: false, reason: 'TAKEN' as const }
+      : { available: true as const };
+  }
+
+  private async isUsernameTaken(username: string, exceptUserId?: string) {
+    const existing = await this.prisma.user.findUnique({
+      where: { username },
+      select: { id: true },
+    });
+    return Boolean(existing && existing.id !== exceptUserId);
   }
 
   async switchProfile(userId: string, role: UserRole) {

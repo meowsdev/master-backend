@@ -136,6 +136,10 @@ model User {
   otp          String?    @db.VarChar(8)
   otpExpire    DateTime?
   name         String?    @db.VarChar(100)
+  username     String?    @unique @db.VarChar(30)
+  // Ids from the Bangladesh locations reference data (see LocationsService)
+  districtId   Int?
+  upazilaId    Int?
   email        String?    @unique
   dateOfBirth  DateTime?  @db.Date
   profilePhoto String?    @db.VarChar(255)
@@ -322,6 +326,10 @@ model Service {
   id           String   @id @default(uuid())
   categoryId   String
   name         String   @db.VarChar(100)
+  // Shown on the public service page (hero image, Bengali title, feature list)
+  nameBn       String?  @db.VarChar(150)
+  imageUrl     String?  @db.VarChar(500)
+  features     String[] @default([])
   description  String?  @db.VarChar(255)
   isFixedPrice Boolean  @default(false)
   isPopular    Boolean  @default(false)

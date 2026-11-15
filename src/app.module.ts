@@ -22,6 +22,7 @@ import { ChatAuditLogModule } from './modules/chat-audit-log/chat-audit-log.modu
 import { CounselorAuditLogModule } from './modules/counselor-audit-log/counselor-audit-log.module';
 import { ProviderLevelingModule } from './modules/provider-leveling/provider-leveling.module';
 import { LegalEscalationModule } from './modules/legal-escalation/legal-escalation.module';
+import { LocationsModule } from './modules/locations/locations.module';
 
 @Module({
   imports: [
@@ -46,6 +47,7 @@ import { LegalEscalationModule } from './modules/legal-escalation/legal-escalati
     CounselorAuditLogModule,
     ProviderLevelingModule,
     LegalEscalationModule,
+    LocationsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

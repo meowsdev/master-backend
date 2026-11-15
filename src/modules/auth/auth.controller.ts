@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Get,
+  Query,
   HttpCode,
   Patch,
   Post,
@@ -40,6 +41,14 @@ export class AuthController {
     private readonly authService: AuthService,
     private readonly sessions: SessionsService,
   ) {}
+
+  @ApiOperation({
+    summary: 'Is this username free? (public, used by the sign-up form)',
+  })
+  @Get('username-available')
+  checkUsername(@Query('username') username: string) {
+    return this.authService.checkUsername(username);
+  }
 
   @ApiOperation({ summary: 'Request Otp Via Phone Number' })
   @UseFilters(OtpThrottledFilter)

@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { JwtModule, JwtModuleOptions } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
 import { PrismaModule } from '../../prisma/prisma.module';
+import { LocationsModule } from '../locations/locations.module';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { getAccessExpiresIn, getAccessSecret } from './auth.config';
@@ -13,6 +14,7 @@ import { JwtStrategy } from './strategies/jwt.strategy';
 @Module({
   imports: [
     PrismaModule,
+    LocationsModule,
     PassportModule,
     // Async so the secret is read after ConfigModule has loaded `.env`.
     JwtModule.registerAsync({
