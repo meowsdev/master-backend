@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
@@ -15,6 +16,7 @@ import { TechnicianLoginDto } from './dto/technician-login.dto';
 import { UserRole } from '@prisma/client';
 import { SessionContext, SessionsService } from './sessions.service';
 import { LocationsService } from '../locations/locations.service';
+import { SELF_SERVICE_SIGNUP_ROLES } from './role-policy';
 
 const USERNAME_PATTERN = /^[a-z0-9_]{3,20}$/;
 
@@ -186,6 +188,14 @@ export class AuthService {
       if (isEmailExisit) {
         throw new BadRequestException('Email already exists');
       }
+    }
+
+    // ADMIN, MANAGER, SUPPORT and TECHNICIAN accounts are created by an administrator;
+    // nobody may pick them for themselves while signing up.
+    if (!user.name && data.role && !SELF_SERVICE_SIGNUP_ROLES.includes(data.role)) {
+      throw new ForbiddenException(
+        `The ${data.role} role can only be granted by an administrator`,
+      );
     }
 
     // Strict single role constraint: A phone number cannot have more than one role

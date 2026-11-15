@@ -75,4 +75,20 @@ describe('AuthService.completeProfile (location is optional)', () => {
       service.completeProfile('u1', { districtId: null, upazilaId: upazila.id }),
     ).rejects.toBeInstanceOf(BadRequestException);
   });
+
+  describe('staff roles cannot be chosen at sign-up', () => {
+    it.each(['ADMIN', 'MANAGER', 'SUPPORT', 'TECHNICIAN'])('%s is refused', async (role) => {
+      const { service } = buildService({ name: null });
+      await expect(
+        service.completeProfile('u1', { ...newAccount, role: role as never }),
+      ).rejects.toThrow(/can only be granted by an administrator/);
+    });
+
+    it.each(['CUSTOMER', 'PROVIDER', 'COUNSELOR'])('%s is still allowed', async (role) => {
+      const { service } = buildService({ name: null });
+      await expect(
+        service.completeProfile('u1', { ...newAccount, role: role as never }),
+      ).resolves.toBeDefined();
+    });
+  });
 });

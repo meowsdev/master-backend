@@ -84,8 +84,9 @@ export class OrdersController {
   update(
     @Param('id', new ParseUUIDPipe()) id: string,
     @Body() data: UpdateOrderDto,
+    @Req() req: AuthenticatedRequest,
   ) {
-    return this.ordersService.update(id, data);
+    return this.ordersService.update(id, data, req.user);
   }
 
   @Patch(':id/status')

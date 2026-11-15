@@ -1,62 +1,54 @@
-import { ApiPropertyOptional } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
-  IsDateString,
+  IsNotEmpty,
   IsNumber,
   IsOptional,
+  IsPhoneNumber,
+  IsString,
   IsUUID,
   Max,
+  MaxLength,
   Min,
+  ValidateIf,
 } from 'class-validator';
 
-export class CreateTechnicianProfileDto {
+/** Admin creates a technician account (a technician never signs themselves up). */
+export class AdminCreateTechnicianDto {
+  @ApiProperty({ example: '+8801700000000', description: 'Technician phone number with country code' })
+  @IsString()
+  @IsPhoneNumber()
+  mobileNumber!: string;
+
+  @ApiProperty({ example: 'Rahim Uddin' })
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(100)
+  name!: string;
+
   @ApiPropertyOptional({
     format: 'uuid',
     example: '4d2d7c40-9f10-4a94-9c44-4cc3fbb81f67',
+    description: 'Provider agency the technician works under',
   })
   @IsOptional()
   @IsUUID()
   providerAgencyId?: string;
-
-  @ApiPropertyOptional({ example: '2026-09-12T10:00:00.000Z' })
-  @IsOptional()
-  @IsDateString()
-  invitedAt?: string;
-
-  @ApiPropertyOptional({ example: 23.7465, minimum: -90, maximum: 90 })
-  @IsOptional()
-  @IsNumber()
-  @Min(-90)
-  @Max(90)
-  currentLat?: number;
-
-  @ApiPropertyOptional({ example: 90.376, minimum: -180, maximum: 180 })
-  @IsOptional()
-  @IsNumber()
-  @Min(-180)
-  @Max(180)
-  currentLong?: number;
 }
 
-export class UpdateTechnicianProfileDto {
-  @ApiPropertyOptional({
+/** Admin attaches a technician to a provider agency, or detaches with null. */
+export class AssignTechnicianAgencyDto {
+  @ApiProperty({
     format: 'uuid',
-    example: '4d2d7c40-9f10-4a94-9c44-4cc3fbb81f67',
     nullable: true,
+    example: '4d2d7c40-9f10-4a94-9c44-4cc3fbb81f67',
   })
-  @IsOptional()
+  @ValidateIf((_, value) => value !== null)
   @IsUUID()
-  providerAgencyId?: string;
+  providerAgencyId!: string | null;
+}
 
-  @ApiPropertyOptional({ example: '2026-09-12T10:00:00.000Z' })
-  @IsOptional()
-  @IsDateString()
-  invitedAt?: string;
-
-  @ApiPropertyOptional({ example: '2026-09-12T10:15:00.000Z' })
-  @IsOptional()
-  @IsDateString()
-  lastLoginAt?: string;
-
+/** The only thing a technician may change about their own profile. */
+export class UpdateMyTechnicianLocationDto {
   @ApiPropertyOptional({ example: 23.7465, minimum: -90, maximum: 90 })
   @IsOptional()
   @IsNumber()

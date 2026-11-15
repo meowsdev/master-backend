@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { UserRole, OrderStatus } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { assertCanManageTechnicians } from '../auth/role-policy';
 import { CreateCustomOrderDto } from './dto/create-custom-order.dto';
 import {
   UpdateOrderDto,
@@ -26,6 +27,9 @@ export class OrdersService {
   constructor(private readonly prisma: PrismaService) {}
 
   async create(data: CreateCustomOrderDto, user?: { id: string; role: UserRole }) {
+    // A customer (or anyone else) can't choose the technician; only an admin assigns one.
+    if (data.technicianId !== undefined) assertCanManageTechnicians(user?.role);
+
     await assertService(this.prisma, data.serviceId);
 
     // 1. Resolve Customer ID from input or authenticated session
@@ -300,7 +304,9 @@ export class OrdersService {
     return order;
   }
 
-  async update(id: string, data: UpdateOrderDto) {
+  async update(id: string, data: UpdateOrderDto, user: { id: string; role: UserRole }) {
+    if (data.technicianId !== undefined) assertCanManageTechnicians(user.role);
+
     const order = await this.findOne(id);
     await assertTechnician(this.prisma, data.technicianId);
 
