@@ -102,7 +102,7 @@ export class ServicesService {
     search?: string,
     isPopular?: boolean,
   ) {
-    return this.prisma.service.findMany({
+    const services = await this.prisma.service.findMany({
       where: {
         isActive: true,
         isDeleted: false,
@@ -122,6 +122,24 @@ export class ServicesService {
       },
       include: {
         category: true,
+        // Only providers who can actually take orders for this service today
+        serviceAssignments: {
+          where: {
+            isActive: true,
+            user: {
+              status: 'ACTIVE',
+              providerProfile: { is: { isBlockedForNegative: false } },
+            },
+          },
+          select: {
+            user: {
+              select: {
+                name: true,
+                providerProfile: { select: { rating: true } },
+              },
+            },
+          },
+        },
       },
       orderBy: [
         { isPopular: 'desc' },
@@ -129,6 +147,54 @@ export class ServicesService {
         { createdAt: 'asc' },
       ],
     });
+
+    return services.map(({ serviceAssignments, ...service }) =>
+      this.attachProviderSummary(service, serviceAssignments),
+    );
+  }
+
+  /**
+   * Builds the lightweight provider preview shown in the customer chat list:
+   * best-rated provider names first, plus the average of rated providers.
+   * Unrated providers are left out of the average so a new service reads "New".
+   */
+  private attachProviderSummary<T extends object>(
+    service: T,
+    assignments: Array<{
+      user: {
+        name: string | null;
+        providerProfile: { rating: unknown } | null;
+      };
+    }>,
+  ) {
+    const providers = assignments
+      .map(({ user }) => ({
+        name: user.name?.trim() || null,
+        rating: Number(user.providerProfile?.rating ?? 0),
+      }))
+      .sort((a, b) => b.rating - a.rating);
+
+    const ratedProviders = providers.filter((provider) => provider.rating > 0);
+    const averageRating = ratedProviders.length
+      ? Number(
+          (
+            ratedProviders.reduce((sum, provider) => sum + provider.rating, 0) /
+            ratedProviders.length
+          ).toFixed(1),
+        )
+      : null;
+
+    return {
+      ...service,
+      providerSummary: {
+        providerCount: providers.length,
+        providerNames: providers
+          .map((provider) => provider.name)
+          .filter((name): name is string => Boolean(name))
+          .slice(0, 3),
+        averageRating,
+      },
+    };
   }
 
   async getSingleService(id: string) {
