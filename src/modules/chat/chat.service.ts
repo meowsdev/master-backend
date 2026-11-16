@@ -5,7 +5,8 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { SendMessageDto } from './dto/send-message.dto';
-import { MessageType, PaymentMode, UserRole } from '@prisma/client';
+import { MessageType, PaymentMode, Prisma, UserRole } from '@prisma/client';
+import { isOrderChatOpen } from './order-chat-policy';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ChatBookingService } from './chat-booking.service';
 import { ChatSessionService } from './chat-session.service';
@@ -79,11 +80,17 @@ export class ChatService {
         },
         select: {
           id: true,
+          categoryId: true,
+          customerProfileId: true,
         },
       });
 
       if (!conversation) {
         throw new NotFoundException('Conversation not found');
+      }
+
+      if (dto.orderId) {
+        await this.assertOrderTabIsOpen(tx, conversation, dto.orderId);
       }
 
       const sender = await tx.user.findUnique({
@@ -140,6 +147,7 @@ export class ChatService {
       const message = await tx.message.create({
         data: {
           sessionId: conversationId,
+          orderId: dto.orderId ?? null,
           senderId,
           text,
           fileUrl,
@@ -172,17 +180,55 @@ export class ChatService {
     });
   }
 
+  /** An order tab only belongs to its own customer's chat of the same main service, and closes with the order. */
+  private async assertOrderTabIsOpen(
+    tx: Prisma.TransactionClient,
+    conversation: { categoryId: string; customerProfileId: string },
+    orderId: string,
+  ) {
+    const order = await tx.order.findUnique({
+      where: { id: orderId },
+      select: {
+        customerId: true,
+        orderStatus: true,
+        service: { select: { categoryId: true } },
+        revisions: { select: { revisionStatus: true } },
+      },
+    });
+    if (
+      !order ||
+      order.customerId !== conversation.customerProfileId ||
+      order.service.categoryId !== conversation.categoryId
+    ) {
+      throw new NotFoundException('Order not found in this conversation');
+    }
+    if (!isOrderChatOpen(order)) {
+      throw new ForbiddenException(
+        'This order is closed. Request a revision within 3 days of completion to chat again.',
+      );
+    }
+  }
+
+  /**
+   * `orderId` omitted: every message of the conversation.
+   * `orderId = 'general'`: only the General Chat tab. A uuid: only that order's tab.
+   */
   async getMessages(
     sessionId: string,
     limit = 50,
     offset = 0,
     currentUserId?: string,
+    orderId?: string,
   ) {
+    const tabFilter =
+      orderId === undefined ? {} : { orderId: orderId === 'general' ? null : orderId };
+
     if (currentUserId) {
       // Auto-mark incoming unread messages as read in the database
       await this.prisma.message.updateMany({
         where: {
           sessionId,
+          ...tabFilter,
           senderId: { not: currentUserId },
           isRead: false,
         },
@@ -196,6 +242,7 @@ export class ChatService {
       where: {
         sessionId,
         isDeleted: false,
+        ...tabFilter,
       },
       orderBy: {
         createdAt: 'desc',

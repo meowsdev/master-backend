@@ -7,6 +7,8 @@ import {
 import { UserRole, OrderStatus } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { assertCanManageTechnicians } from '../auth/role-policy';
+import { createWithUniqueReference } from './order-reference';
+import { completionStamp } from './order-view';
 import { CreateCustomOrderDto } from './dto/create-custom-order.dto';
 import {
   UpdateOrderDto,
@@ -125,42 +127,24 @@ export class OrdersService {
     await assertProvider(this.prisma, providerId);
     await assertTechnician(this.prisma, data.technicianId);
 
-    // Authoritative backend validation: Block duplicate active orders for the SAME service.
-    // Different services can have concurrent active orders simultaneously.
-    const existingActiveOrder = await this.prisma.order.findFirst({
-      where: {
-        customerId,
-        serviceId: data.serviceId,
-        orderStatus: {
-          in: ['PENDING', 'ACCEPTED', 'IN_PROGRESS'],
-        },
-      },
-      include: {
-        service: true,
-      },
-    });
-
-    if (existingActiveOrder) {
-      const serviceName = existingActiveOrder.service?.name
-        ? ` for "${existingActiveOrder.service.name}"`
-        : '';
-      throw new BadRequestException(
-        `An active order (#${existingActiveOrder.id.slice(0, 8).toUpperCase()})${serviceName} is already running with status "${existingActiveOrder.orderStatus}". You cannot place another order for this same service until the current order is completed or cancelled.`,
-      );
-    }
+    // A customer may run several orders of the same service at once; each order has its own
+    // chat tab, assignee and lifecycle, so nothing here limits how many are active.
 
     const prices = calculateOrderPrices(data);
 
-    return this.prisma.order.create({
-      data: {
-        providerId,
-        customerId,
-        technicianId: data.technicianId,
-        serviceId: data.serviceId,
-        ...prices,
-      },
-      include: ORDER_RELATIONS_INCLUDE,
-    });
+    return createWithUniqueReference((referenceCode) =>
+      this.prisma.order.create({
+        data: {
+          referenceCode,
+          providerId,
+          customerId,
+          technicianId: data.technicianId,
+          serviceId: data.serviceId,
+          ...prices,
+        },
+        include: ORDER_RELATIONS_INCLUDE,
+      }),
+    );
   }
 
 
@@ -341,6 +325,7 @@ export class OrdersService {
         data: {
           technicianId: data.technicianId,
           orderStatus: data.orderStatus,
+          ...completionStamp(data.orderStatus),
           paymentStatus: data.paymentStatus,
           ...prices,
           priceEditCount: isPriceEdited ? { increment: 1 } : undefined,
@@ -375,6 +360,7 @@ export class OrdersService {
         where: { id },
         data: {
           orderStatus: data.orderStatus,
+          ...completionStamp(data.orderStatus),
         },
         include: ORDER_RELATIONS_INCLUDE,
       });
@@ -415,6 +401,7 @@ export class OrdersService {
           data: {
             providerId: provider.id,
             orderStatus: data.orderStatus,
+            ...completionStamp(data.orderStatus),
           },
           include: ORDER_RELATIONS_INCLUDE,
         });

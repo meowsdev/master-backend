@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import { MessageType, PaymentMode } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { findFreeReferenceCode } from '../orders/order-reference';
 
 @Injectable()
 export class ChatBookingService {
@@ -40,23 +41,6 @@ export class ChatBookingService {
       });
       if (!service) {
         throw new NotFoundException('Service not found');
-      }
-
-      // 2.1 Prevent duplicate active running orders for same service
-      const existingActiveOrder = await tx.order.findFirst({
-        where: {
-          customerId: customerProfile.id,
-          serviceId: service.id,
-          orderStatus: {
-            in: ['PENDING', 'ACCEPTED', 'IN_PROGRESS'],
-          },
-        },
-      });
-
-      if (existingActiveOrder) {
-        throw new BadRequestException(
-          `You already have an active running order (#${existingActiveOrder.id.slice(0, 8).toUpperCase()}) with status "${existingActiveOrder.orderStatus}". Please wait until it is completed or cancel it before placing another order.`,
-        );
       }
 
       // 3. Resolve provider profile
@@ -110,6 +94,7 @@ export class ChatBookingService {
       // 4. Create Order
       const order = await tx.order.create({
         data: {
+          referenceCode: await findFreeReferenceCode(tx),
           customerId: customerProfile.id,
           providerId: providerProfileId,
           serviceId: service.id,

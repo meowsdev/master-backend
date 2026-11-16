@@ -27,12 +27,22 @@ export class ChatSessionService {
       throw new NotFoundException('Customer profile not found');
     }
 
+    // One chat per customer per MAIN service: every sub-service of AC Repair shares the
+    // same conversation, and each order inside it gets its own tab (Message.orderId).
+    const service = await this.prisma.service.findUnique({
+      where: { id: data.serviceId },
+      select: { categoryId: true },
+    });
+    if (!service) {
+      throw new NotFoundException('Service not found');
+    }
+
     return this.prisma.$transaction(async (tx) => {
       let session = await tx.chatSession.findUnique({
         where: {
-          customerProfileId_serviceId: {
+          customerProfileId_categoryId: {
             customerProfileId: data.customerProfileId,
-            serviceId: data.serviceId,
+            categoryId: service.categoryId,
           },
         },
         include: {
@@ -215,6 +225,8 @@ export class ChatSessionService {
         data: {
           customerId: customerProfile.userId,
           customerProfileId: data.customerProfileId,
+          categoryId: service.categoryId,
+          // The service the chat was opened from; the unique key is the main service.
           serviceId: data.serviceId,
           counselorId: assignedCounselorId,
           providerId: assignedProviderId,

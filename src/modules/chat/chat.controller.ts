@@ -24,7 +24,7 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { IsInt, IsOptional, IsUUID, Max, Min } from 'class-validator';
+import { IsInt, IsOptional, IsString, IsUUID, Max, Min } from 'class-validator';
 import type { Request } from 'express';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -55,6 +55,11 @@ export class ChatHistoryQueryDto {
   @IsInt()
   @Min(0)
   offset = 0;
+
+  @ApiPropertyOptional({ description: "'general' or an order id; omit for all tabs" })
+  @IsOptional()
+  @IsString()
+  orderId?: string;
 }
 
 type AuthenticatedRequest = Request & { user: { id: string } };
@@ -229,6 +234,7 @@ export class ChatController {
       query.limit,
       query.offset,
       req.user.id,
+      query.orderId,
     );
   }
 

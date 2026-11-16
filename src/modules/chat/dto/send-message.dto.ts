@@ -59,4 +59,12 @@ export class SendMessageDto {
   @IsIn(CLIENT_MESSAGE_TYPES)
   @IsOptional()
   type?: MessageType;
+
+  @ApiPropertyOptional({
+    format: 'uuid',
+    description: 'The order tab this message belongs to. Omit for the General Chat tab.',
+  })
+  @IsUUID()
+  @IsOptional()
+  orderId?: string;
 }

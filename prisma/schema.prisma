@@ -203,6 +203,8 @@ model ProviderProfile {
   userId               String        @unique
   bio                  String?
   rating               Decimal       @default(0.0) @db.Decimal(3, 2)
+  /// Shown to customers in order tabs; has priority over the username.
+  companyName          String?       @db.VarChar(120)
   totalCompletedOrders Int           @default(0)
   level                ProviderLevel @default(NEW)
   experienceYears      Int           @default(0)
@@ -324,8 +326,9 @@ model ServiceCategory {
   sortOrder        Int       @default(0)
   deletedAt        DateTime?
 
-  services  Service[]
-  questions ServiceQuestion[]
+  services     Service[]
+  questions    ServiceQuestion[]
+  chatSessions ChatSession[]
 
   @@index([sortOrder])
 }
@@ -390,6 +393,8 @@ model ChatSession {
   providerId        String?
   customerProfileId String
   serviceId         String
+  /// One chat per customer per main service; orders of that service are tabs inside it.
+  categoryId        String
   tabCategory       ChatTabCategory @default(SERVICE)
   flowType          ChatFlowType    @default(CUSTOMER_PROVIDER)
   assignedAt        DateTime?
@@ -401,12 +406,14 @@ model ChatSession {
   providerUser       User?               @relation("ChatSessionProvider", fields: [providerId], references: [id], onDelete: SetNull)
   customerProfile    CustomerProfile     @relation("CustomerProfileChatSessions", fields: [customerProfileId], references: [id], onDelete: Cascade)
   service            Service             @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+  category           ServiceCategory     @relation(fields: [categoryId], references: [id], onDelete: Cascade)
   participants       ChatParticipant[]
   messages           Message[]
   chatAuditLogs      ChatAuditLog[]
   counselorAuditLogs CounselorAuditLog[]
 
-  @@unique([customerProfileId, serviceId])
+  @@unique([customerProfileId, categoryId])
+  @@index([categoryId])
   @@index([customerId])
   @@index([counselorId])
   @@index([providerId])
@@ -444,12 +451,16 @@ model Message {
   isDeleted Boolean     @default(false)
   createdAt DateTime    @default(now())
   updatedAt DateTime    @updatedAt
+  /// null = General Chat tab; otherwise the order tab the message belongs to.
+  orderId   String?
 
+  order   Order?      @relation(fields: [orderId], references: [id], onDelete: Cascade)
   session ChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
   sender  User        @relation("SentMessages", fields: [senderId], references: [id], onDelete: Cascade)
 
   @@index([sessionId])
   @@index([senderId])
+  @@index([orderId])
 }
 
 model ChatAuditLog {
@@ -506,6 +517,9 @@ model CustomerRetention {
 
 model Order {
   id              String        @id @default(uuid())
+  /// Customer-facing reference, e.g. A94K2B. Random, unique, never reused.
+  referenceCode   String        @unique @db.VarChar(6)
+  completedAt     DateTime?
   providerId      String
   customerId      String
   technicianId    String?
@@ -531,6 +545,7 @@ model Order {
   providerReview ProviderReview?
   bookingDetail  OrderBookingDetail?
   items          OrderItem[]
+  messages       Message[]
 
   @@index([providerId])
   @@index([customerId])

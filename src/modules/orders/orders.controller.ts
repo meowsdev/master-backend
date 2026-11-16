@@ -11,6 +11,7 @@ import {
   Post,
   Req,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { UserRole } from '@prisma/client';
@@ -20,6 +21,7 @@ import {
   UpdateOrderDto,
   UpdateOrderStatusDto,
 } from './dto/update-order-status.dto';
+import { OrderViewInterceptor } from './order-view';
 import { OrdersService } from './orders.service';
 
 interface AuthenticatedRequest {
@@ -32,6 +34,7 @@ interface AuthenticatedRequest {
 @ApiTags('Orders')
 @ApiBearerAuth('JWT-auth')
 @UseGuards(JwtAuthGuard)
+@UseInterceptors(OrderViewInterceptor)
 @Controller('orders')
 export class OrdersController {
   constructor(private readonly ordersService: OrdersService) {}

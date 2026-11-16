@@ -7,6 +7,7 @@ export const ORDER_RELATIONS_INCLUDE = {
         select: {
           id: true,
           name: true,
+          username: true,
           mobileNumber: true,
           role: true,
           status: true,
@@ -33,6 +34,7 @@ export const ORDER_RELATIONS_INCLUDE = {
         select: {
           id: true,
           name: true,
+          username: true,
           mobileNumber: true,
           role: true,
           status: true,
@@ -40,7 +42,9 @@ export const ORDER_RELATIONS_INCLUDE = {
       },
     },
   },
-  service: true,
+  service: { include: { category: true } },
+  items: true,
+  bookingDetail: true,
   paymentAndTip: true,
   revisions: true,
   providerReview: true,
