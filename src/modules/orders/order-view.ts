@@ -12,7 +12,10 @@ export function completionStamp(status?: OrderStatus | string) {
 }
 
 interface NamedUser {
+  name?: string | null;
   username?: string | null;
+  profilePhoto?: string | null;
+  addresses?: Array<{ addressText: string }>;
 }
 
 interface AssigneeSource {
@@ -40,13 +43,43 @@ export function buildAssigneeLabels(order: AssigneeSource): AssigneeLabels {
   return { technician, provider, primary: technician ?? provider };
 }
 
-type OrderLike = AssigneeSource & Partial<Parameters<typeof isOrderChatOpen>[0]>;
+/** Shown on the customer's order tab once a provider has accepted: who is coming, and from where. */
+export interface AssignmentCard {
+  /** TECHNICIAN when one is assigned, otherwise the provider handles the job personally. */
+  role: 'TECHNICIAN' | 'PROVIDER';
+  name: string | null;
+  photoUrl: string | null;
+  workshopAddress: string | null;
+  shopName: string | null;
+}
+
+/** Only customers-safe fields: no phone numbers, wallet or KYC. Null until the order is accepted. */
+export function buildAssignmentCard(order: AssigneeSource & { orderStatus?: OrderStatus }): AssignmentCard | null {
+  const isAccepted = order.orderStatus && order.orderStatus !== OrderStatus.PENDING && order.orderStatus !== OrderStatus.CANCELLED;
+  if (!isAccepted) return null;
+
+  const technicianUser = order.technician?.user;
+  const providerUser = order.provider?.user;
+  const worker = technicianUser ?? providerUser;
+  if (!worker) return null;
+
+  return {
+    role: technicianUser ? 'TECHNICIAN' : 'PROVIDER',
+    name: worker.name ?? worker.username ?? null,
+    photoUrl: worker.profilePhoto ?? providerUser?.profilePhoto ?? null,
+    workshopAddress: providerUser?.addresses?.[0]?.addressText ?? null,
+    shopName: order.provider?.companyName?.trim() || null,
+  };
+}
+
+type OrderLike = AssigneeSource & { orderStatus?: OrderStatus } & Partial<Parameters<typeof isOrderChatOpen>[0]>;
 
 const addOrderView = <T extends object>(order: T) => {
   const source = order as OrderLike;
   return {
     ...order,
     assignee: buildAssigneeLabels(source),
+    assignmentCard: buildAssignmentCard(source),
     // Needs orderStatus + revisions; list endpoints include both.
     isChatOpen: source.orderStatus && source.revisions ? isOrderChatOpen({ orderStatus: source.orderStatus, revisions: source.revisions }) : undefined,
   };

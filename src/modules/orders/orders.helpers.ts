@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { BadRequestException } from '@nestjs/common';
 
 export const ORDER_RELATIONS_INCLUDE = {
@@ -8,6 +9,13 @@ export const ORDER_RELATIONS_INCLUDE = {
           id: true,
           name: true,
           username: true,
+          profilePhoto: true,
+          // The provider's default saved address is shown to customers as the workshop.
+          addresses: {
+            orderBy: [{ isDefault: 'desc' }, { createdAt: 'asc' }],
+            take: 1,
+            select: { addressText: true },
+          },
           mobileNumber: true,
           role: true,
           status: true,
@@ -35,6 +43,7 @@ export const ORDER_RELATIONS_INCLUDE = {
           id: true,
           name: true,
           username: true,
+          profilePhoto: true,
           mobileNumber: true,
           role: true,
           status: true,
@@ -48,7 +57,7 @@ export const ORDER_RELATIONS_INCLUDE = {
   paymentAndTip: true,
   revisions: true,
   providerReview: true,
-} as const;
+} satisfies Prisma.OrderInclude;
 
 export interface PriceCalculationInput {
   originalPrice: number;
