@@ -416,6 +416,7 @@ async function main() {
           data: {
             categoryId: category.id,
             name: serviceData.name,
+            slug: serviceData.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, ''),
             description: serviceData.description,
             isFixedPrice: serviceData.isFixedPrice,
             isPopular: (serviceData as any).isPopular ?? false,

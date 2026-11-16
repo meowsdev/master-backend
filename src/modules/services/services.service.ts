@@ -92,9 +92,9 @@ export class ServicesService {
   }
 
   async createService(data: CreateServiceDto) {
-    console.log(data);
-
-    return this.prisma.service.create({ data });
+    // The live database requires a slug, unique inside the main service.
+    const slug = slugify(data.name, { lower: true, strict: true });
+    return this.prisma.service.create({ data: { ...data, slug } });
   }
 
   async getAllServices(

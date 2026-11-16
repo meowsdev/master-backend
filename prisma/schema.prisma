@@ -286,18 +286,18 @@ model OtpRequest {
 }
 
 model RefreshToken {
-  id                 String    @id @default(uuid())
-  userId             String
-  tokenHash          String    @unique
+  id                String    @id @default(uuid())
+  userId            String
+  tokenHash         String    @unique
   // Groups every rotation of one login; revoking the family ends that session.
-  familyId           String
-  expiresAt          DateTime
-  revokedAt          DateTime?
-  replacedByTokenId  String?
-  userAgent          String?
-  ipAddress          String?
-  createdAt          DateTime  @default(now())
-  lastUsedAt         DateTime  @default(now())
+  familyId          String
+  expiresAt         DateTime
+  revokedAt         DateTime?
+  replacedByTokenId String?
+  userAgent         String?
+  ipAddress         String?
+  createdAt         DateTime  @default(now())
+  lastUsedAt        DateTime  @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -307,47 +307,62 @@ model RefreshToken {
 }
 
 model ServiceCategory {
-  id           String   @id @default(uuid())
-  name         String   @unique @db.VarChar(100)
-  slug         String   @unique
-  description  String?
-  iconUrl      String?  @db.VarChar(255)
-  isFixedPrice Boolean  @default(false)
-  basePrice    Decimal  @default(0.0) @db.Decimal(10, 2)
-  isActive     Boolean  @default(true)
-  isDeleted    Boolean  @default(false)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  id               String    @id @default(uuid())
+  name             String    @unique @db.VarChar(100)
+  slug             String    @unique
+  description      String?
+  iconUrl          String?   @db.VarChar(255)
+  isFixedPrice     Boolean   @default(false)
+  basePrice        Decimal   @default(0.0) @db.Decimal(10, 2)
+  isActive         Boolean   @default(true)
+  isDeleted        Boolean   @default(false)
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+  icon             String?   @db.VarChar(16)
+  shortDescription String?   @db.VarChar(160)
+  isPopular        Boolean   @default(false)
+  sortOrder        Int       @default(0)
+  deletedAt        DateTime?
 
-  services Service[]
+  services  Service[]
+  questions ServiceQuestion[]
+
+  @@index([sortOrder])
 }
 
 model Service {
-  id           String   @id @default(uuid())
+  id           String    @id @default(uuid())
   categoryId   String
-  name         String   @db.VarChar(100)
+  name         String    @db.VarChar(100)
   // Shown on the public service page (hero image, Bengali title, feature list)
-  nameBn       String?  @db.VarChar(150)
-  imageUrl     String?  @db.VarChar(500)
-  features     String[] @default([])
-  description  String?  @db.VarChar(255)
-  isFixedPrice Boolean  @default(false)
-  isPopular    Boolean  @default(false)
-  isFeatured   Boolean  @default(false)
-  orderCount   Int      @default(0)
-  basePrice    Decimal  @default(0.0) @db.Decimal(10, 2)
+  nameBn       String?   @db.VarChar(150)
+  imageUrl     String?   @db.VarChar(500)
+  features     String[]  @default([])
+  description  String?   @db.VarChar(255)
+  isFixedPrice Boolean   @default(false)
+  isPopular    Boolean   @default(false)
+  isFeatured   Boolean   @default(false)
+  orderCount   Int       @default(0)
+  basePrice    Decimal   @default(0.0) @db.Decimal(10, 2)
   durationMin  Int?
-  isActive     Boolean  @default(true)
-  isDeleted    Boolean  @default(false)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  isActive     Boolean   @default(true)
+  isDeleted    Boolean   @default(false)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  slug         String    @db.VarChar(120)
+  /// FIXED = one price; PER_UNIT / PER_SQFT = the customer also picks a quantity.
+  priceUnit    PriceUnit @default(FIXED)
+  sortOrder    Int       @default(0)
+  deletedAt    DateTime?
 
   category           ServiceCategory   @relation(fields: [categoryId], references: [id], onDelete: Cascade)
   chatSessions       ChatSession[]
   activeChatSlots    ActiveChatSlot[]
   orders             Order[]
   serviceAssignments ServiceAssignee[]
+  orderItems         OrderItem[]
 
+  @@unique([categoryId, slug])
   @@index([categoryId])
   @@index([isPopular])
 }
@@ -514,6 +529,8 @@ model Order {
   paymentAndTip  OrderPaymentAndTip?
   revisions      ServiceRevision[]
   providerReview ProviderReview?
+  bookingDetail  OrderBookingDetail?
+  items          OrderItem[]
 
   @@index([providerId])
   @@index([customerId])
@@ -593,4 +610,90 @@ model CounselorAuditLog {
 
   @@index([counselorId])
   @@index([sessionId])
+}
+
+// ---------------------------------------------------------------------------
+// Place-order catalog. Admins set every price and every "countable" flag here;
+// the customer app only displays them and the backend computes the total.
+// ---------------------------------------------------------------------------
+
+/// Follow-up question shown after the customer picks a sub-service of this main service
+/// (e.g. AC: "Is the outdoor unit hanging?"). Admins set the option prices.
+model ServiceQuestion {
+  id         String   @id @default(uuid())
+  categoryId String
+  text       String   @db.VarChar(255)
+  textBn     String?  @db.VarChar(300)
+  sortOrder  Int      @default(0)
+  isActive   Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  category ServiceCategory         @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  options  ServiceQuestionOption[]
+
+  @@index([categoryId])
+}
+
+model ServiceQuestionOption {
+  id          String  @id @default(uuid())
+  questionId  String
+  label       String  @db.VarChar(100)
+  labelBn     String? @db.VarChar(150)
+  /// Surcharge per counted unit; 0 for a plain "No".
+  unitPrice   Decimal @default(0.0) @db.Decimal(10, 2)
+  /// When true the customer says how many of the ordered units this applies to.
+  isCountable Boolean @default(false)
+  sortOrder   Int     @default(0)
+
+  question ServiceQuestion @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@index([questionId])
+}
+
+/// What the customer asked for, plus the price breakdown frozen at order time.
+model OrderBookingDetail {
+  id             String   @id @default(uuid())
+  orderId        String   @unique
+  subServiceId   String?
+  subServiceName String   @db.VarChar(200)
+  quantity       Int      @default(1)
+  description    String?  @db.Text
+  districtId     Int
+  upazilaId      Int
+  addressDetail  String   @db.VarChar(300)
+  scheduledDate  DateTime @db.Date
+  timeSlot       String   @db.VarChar(40)
+  imageUrls      String[] @default([])
+  /// [{ label, unitPrice, count, amount }] so later admin price edits never rewrite old orders.
+  priceBreakdown Json
+  createdAt      DateTime @default(now())
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+}
+
+enum PriceUnit {
+  FIXED
+  PER_SQFT
+  PER_UNIT
+}
+
+/// One priced line of an order: a sub-service, how many, and the price frozen at order time.
+model OrderItem {
+  id                String    @id @default(uuid())
+  orderId           String
+  subServiceId      String
+  nameSnapshot      String    @db.VarChar(100)
+  unitPriceSnapshot Decimal   @db.Decimal(10, 2)
+  priceUnitSnapshot PriceUnit @default(FIXED)
+  quantity          Int       @default(1)
+  lineTotal         Decimal   @db.Decimal(10, 2)
+  durationSnapshot  Int?
+  createdAt         DateTime  @default(now())
+
+  order      Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  subService Service @relation(fields: [subServiceId], references: [id])
+
+  @@index([orderId])
+  @@index([subServiceId])
 }

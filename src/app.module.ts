@@ -15,6 +15,8 @@ import { ServiceAssigneeModule } from './modules/service-assignee/service-assign
 import { ActiveChatSlotModule } from './modules/active-chat-slot/active-chat-slot.module';
 import { CustomerRetentionModule } from './modules/customer-retention/customer-retention.module';
 import { OrdersModule } from './modules/orders/orders.module';
+import { OrderPlacementModule } from './modules/order-placement/order-placement.module';
+import { UploadsModule } from './modules/uploads/uploads.module';
 import { OrderPaymentTipModule } from './modules/order-payment-tip/order-payment-tip.module';
 import { ServiceRevisionModule } from './modules/service-revision/service-revision.module';
 import { ProviderReviewModule } from './modules/provider-review/provider-review.module';
@@ -40,6 +42,8 @@ import { LocationsModule } from './modules/locations/locations.module';
     ActiveChatSlotModule,
     CustomerRetentionModule,
     OrdersModule,
+    OrderPlacementModule,
+    UploadsModule,
     OrderPaymentTipModule,
     ServiceRevisionModule,
     ProviderReviewModule,
