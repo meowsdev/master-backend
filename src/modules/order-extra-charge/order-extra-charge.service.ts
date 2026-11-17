@@ -40,6 +40,9 @@ export class OrderExtraChargeService {
       throw new BadRequestException(`The price can be changed at most ${MAX_APPROVED_EXTRA_CHARGES} times`);
     }
 
+    const payment = await this.prisma.orderPaymentAndTip.findUnique({ where: { orderId }, select: { paymentMode: true } });
+    if (payment?.paymentMode === 'ONLINE') throw new BadRequestException('The work is finished and waiting for payment');
+
     const pending = await this.prisma.extraChargeRequest.findFirst({ where: { orderId, status: ExtraChargeStatus.PENDING } });
     if (pending) throw new ConflictException('The customer has not answered your previous extra-charge request yet');
 
@@ -66,6 +69,7 @@ export class OrderExtraChargeService {
 
     const order = await this.loadOrder(request.orderId);
     if (order.customer.userId !== actor.id) throw new ForbiddenException('Only the customer of this order can answer');
+    if (order.orderStatus !== OrderStatus.IN_PROGRESS) throw new BadRequestException('This order is no longer in progress');
 
     return this.prisma.$transaction(async (tx) => {
       // updateMany with the PENDING guard makes a double tap (or two tabs) apply the charge once.

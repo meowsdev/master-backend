@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -18,6 +19,13 @@ export class ProviderReviewService {
       where: { id: data.orderId },
     });
     if (!order) throw new BadRequestException('Order not found');
+
+    // Only the order's own customer reviews it, and only once the work is done.
+    if (userId) {
+      const orderCustomer = await this.prisma.customerProfile.findUnique({ where: { id: order.customerId }, select: { userId: true } });
+      if (orderCustomer?.userId !== userId) throw new ForbiddenException('Only the customer of this order can review it');
+    }
+    if (order.orderStatus !== 'COMPLETED') throw new BadRequestException('An order can be reviewed after it is completed');
 
     const providerId = data.providerId || order.providerId;
     let customerId = data.customerId || order.customerId;

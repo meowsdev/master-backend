@@ -19,6 +19,7 @@ import { OrderPlacementModule } from './modules/order-placement/order-placement.
 import { UploadsModule } from './modules/uploads/uploads.module';
 import { OrderPaymentTipModule } from './modules/order-payment-tip/order-payment-tip.module';
 import { OrderExtraChargeModule } from './modules/order-extra-charge/order-extra-charge.module';
+import { OrderCompletionModule } from './modules/order-completion/order-completion.module';
 import { ServiceRevisionModule } from './modules/service-revision/service-revision.module';
 import { ProviderReviewModule } from './modules/provider-review/provider-review.module';
 import { ChatAuditLogModule } from './modules/chat-audit-log/chat-audit-log.module';
@@ -47,6 +48,7 @@ import { LocationsModule } from './modules/locations/locations.module';
     UploadsModule,
     OrderPaymentTipModule,
     OrderExtraChargeModule,
+    OrderCompletionModule,
     ServiceRevisionModule,
     ProviderReviewModule,
     ChatAuditLogModule,

@@ -17,6 +17,16 @@ export function acceptanceStamp(currentStatus: OrderStatus | string, newStatus?:
   return currentStatus === OrderStatus.PENDING && isTaken ? { acceptedAt: new Date() } : {};
 }
 
+/**
+ * A completed order the customer has not reviewed yet keeps its tab (so the payment result and
+ * the review card stay visible) for as long as the warranty window lasts. Chat itself stays closed.
+ */
+export function isReviewPending(order: { orderStatus?: OrderStatus; providerReview?: unknown; completedAt?: Date | null }): boolean {
+  if (order.orderStatus !== OrderStatus.COMPLETED || order.providerReview || !order.completedAt) return false;
+  const windowMs = REVISION_WINDOW_DAYS * 24 * 60 * 60 * 1000;
+  return Date.now() - new Date(order.completedAt).getTime() < windowMs;
+}
+
 interface NamedUser {
   name?: string | null;
   username?: string | null;
@@ -78,7 +88,7 @@ export function buildAssignmentCard(order: AssigneeSource & { orderStatus?: Orde
   };
 }
 
-type OrderLike = AssigneeSource & { orderStatus?: OrderStatus } & Partial<Parameters<typeof isOrderChatOpen>[0]>;
+type OrderLike = AssigneeSource & { orderStatus?: OrderStatus; providerReview?: unknown; completedAt?: Date | null } & Partial<Parameters<typeof isOrderChatOpen>[0]>;
 
 const addOrderView = <T extends object>(order: T) => {
   const source = order as OrderLike;
@@ -87,6 +97,7 @@ const addOrderView = <T extends object>(order: T) => {
     assignee: buildAssigneeLabels(source),
     assignmentCard: buildAssignmentCard(source),
     // Needs orderStatus + revisions; list endpoints include both.
+    isReviewPending: isReviewPending(source),
     isChatOpen: source.orderStatus && source.revisions ? isOrderChatOpen({ orderStatus: source.orderStatus, revisions: source.revisions }) : undefined,
   };
 };

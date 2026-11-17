@@ -60,6 +60,8 @@ enum ChatSlotStatus {
 
 enum PaymentMode {
   CASH
+  /// Provider asked for online payment; the customer has not chosen bKash / Nagad / card yet.
+  ONLINE
   BKASH
   NAGAD
   CARD

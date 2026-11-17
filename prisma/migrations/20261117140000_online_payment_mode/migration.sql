@@ -1,0 +1,1 @@
+ALTER TYPE "PaymentMode" ADD VALUE 'ONLINE';
