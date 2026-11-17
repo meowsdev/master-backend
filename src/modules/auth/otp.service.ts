@@ -17,6 +17,9 @@ export interface OtpSendResult {
   nextAllowedAt: string;
 }
 
+/** What an OTP row looks like once its code is gone: no hash, no expiry, no attempts. */
+export const CLEARED_CODE = { codeHash: null, expiresAt: null, attempts: 0 } as const;
+
 type VerifyOutcome = 'OK' | 'EXPIRED' | 'INVALID' | 'TOO_MANY_ATTEMPTS';
 
 @Injectable()
@@ -135,9 +138,10 @@ export class OtpService {
         if (!row || !isUsable) return { outcome: 'EXPIRED', attemptsLeft: 0 };
 
         if (row.codeHash === hashOtpCode(code)) {
+          // Used: the code is deleted, not just flagged. Only the send counters stay (cooldown, daily cap).
           await tx.otpRequest.update({
             where: { phoneNumber },
-            data: { consumedAt: now },
+            data: { ...CLEARED_CODE, consumedAt: now },
           });
           return { outcome: 'OK', attemptsLeft: 0 };
         }
@@ -146,7 +150,7 @@ export class OtpService {
         const isExhausted = attempts >= config.maxVerifyAttempts;
         await tx.otpRequest.update({
           where: { phoneNumber },
-          data: { attempts, consumedAt: isExhausted ? now : null },
+          data: isExhausted ? { ...CLEARED_CODE, consumedAt: now } : { attempts, consumedAt: null },
         });
         return isExhausted
           ? { outcome: 'TOO_MANY_ATTEMPTS', attemptsLeft: 0 }

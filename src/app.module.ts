@@ -1,4 +1,6 @@
 import { Module } from '@nestjs/common';
+import { APP_INTERCEPTOR } from '@nestjs/core';
+import { ContactPrivacyInterceptor } from './common/contact-privacy.interceptor';
 import { ConfigModule } from '@nestjs/config';
 import { ScheduleModule } from '@nestjs/schedule';
 import { AppController } from './app.controller';
@@ -20,6 +22,7 @@ import { UploadsModule } from './modules/uploads/uploads.module';
 import { OrderPaymentTipModule } from './modules/order-payment-tip/order-payment-tip.module';
 import { OrderExtraChargeModule } from './modules/order-extra-charge/order-extra-charge.module';
 import { OrderCompletionModule } from './modules/order-completion/order-completion.module';
+import { ProviderWalletModule } from './modules/provider-wallet/provider-wallet.module';
 import { ServiceRevisionModule } from './modules/service-revision/service-revision.module';
 import { ProviderReviewModule } from './modules/provider-review/provider-review.module';
 import { ChatAuditLogModule } from './modules/chat-audit-log/chat-audit-log.module';
@@ -49,6 +52,7 @@ import { LocationsModule } from './modules/locations/locations.module';
     OrderPaymentTipModule,
     OrderExtraChargeModule,
     OrderCompletionModule,
+    ProviderWalletModule,
     ServiceRevisionModule,
     ProviderReviewModule,
     ChatAuditLogModule,
@@ -58,6 +62,6 @@ import { LocationsModule } from './modules/locations/locations.module';
     LocationsModule,
   ],
   controllers: [AppController],
-  providers: [AppService],
+  providers: [AppService, { provide: APP_INTERCEPTOR, useClass: ContactPrivacyInterceptor }],
 })
 export class AppModule {}

@@ -2,8 +2,18 @@ import { Prisma } from '@prisma/client';
 import { BadRequestException } from '@nestjs/common';
 
 export const ORDER_RELATIONS_INCLUDE = {
+  // Explicit fields: the customer must never receive the provider's wallet, earnings or blocked flag.
   provider: {
-    include: {
+    select: {
+      id: true,
+      userId: true,
+      bio: true,
+      rating: true,
+      companyName: true,
+      totalCompletedOrders: true,
+      level: true,
+      experienceYears: true,
+      isAvailable: true,
       user: {
         select: {
           id: true,
@@ -29,6 +39,8 @@ export const ORDER_RELATIONS_INCLUDE = {
         select: {
           id: true,
           name: true,
+          username: true,
+          profilePhoto: true,
           mobileNumber: true,
           role: true,
           status: true,

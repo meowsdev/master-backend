@@ -242,6 +242,28 @@ describe('OtpService', () => {
       expect(await verifyCode(service.verify(PHONE, code))).toBe('OTP_EXPIRED');
     });
 
+    it('removes the code from the database once it is verified', async () => {
+      const { service, rows } = build();
+      const { code } = await service.send(PHONE);
+      expect(rows.get(PHONE)!.codeHash).not.toBeNull();
+
+      await service.verify(PHONE, code);
+
+      const row = rows.get(PHONE)!;
+      expect(row.codeHash).toBeNull();
+      expect(row.expiresAt).toBeNull();
+      // Throttling data survives, so verifying cannot be used to dodge the resend cooldown.
+      expect(row.lastSentAt).toBeInstanceOf(Date);
+      expect(row.dailySendCount).toBe(1);
+    });
+
+    it('removes the code when the attempts run out', async () => {
+      const { service, rows } = build();
+      await service.send(PHONE);
+      for (let i = 0; i < 5; i++) await verifyCode(service.verify(PHONE, '000000'));
+      expect(rows.get(PHONE)!.codeHash).toBeNull();
+    });
+
     it('invalidates the OTP after the 5th wrong attempt', async () => {
       const { service } = build();
       const { code } = await service.send(PHONE);

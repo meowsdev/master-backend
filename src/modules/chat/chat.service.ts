@@ -7,6 +7,7 @@ import {
 import { SendMessageDto } from './dto/send-message.dto';
 import { MessageType, PaymentMode, Prisma, UserRole } from '@prisma/client';
 import { isOrderChatOpen } from './order-chat-policy';
+import { assertNoPhoneNumber, canSeeContactDetails } from '../../common/contact-privacy';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ChatBookingService } from './chat-booking.service';
 import { ChatSessionService } from './chat-session.service';
@@ -107,6 +108,9 @@ export class ChatService {
         throw new ForbiddenException('Sender is not allowed');
       }
 
+      // Customers, providers and technicians cannot hand each other a phone number through the chat.
+      if (!canSeeContactDetails(sender.role)) assertNoPhoneNumber(dto.text);
+
       if (dto.type === MessageType.SYSTEM) {
         throw new ForbiddenException('SYSTEM messages cannot be sent by users');
       }
@@ -160,7 +164,6 @@ export class ChatService {
             select: {
               id: true,
               name: true,
-              email: true,
               role: true,
             },
           },

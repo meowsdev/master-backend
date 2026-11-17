@@ -1,5 +1,6 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { ExtraChargeStatus, OrderStatus, UserRole } from '@prisma/client';
+import { assertNoPhoneNumber } from '../../common/contact-privacy';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateExtraChargeDto } from './dto/create-extra-charge.dto';
 
@@ -45,6 +46,9 @@ export class OrderExtraChargeService {
 
     const pending = await this.prisma.extraChargeRequest.findFirst({ where: { orderId, status: ExtraChargeStatus.PENDING } });
     if (pending) throw new ConflictException('The customer has not answered your previous extra-charge request yet');
+
+    // The customer reads these labels, so they cannot carry the provider's phone number.
+    dto.items.forEach((item) => assertNoPhoneNumber(item.label));
 
     const items = dto.items.map(({ label, amount }) => ({ label: label.trim(), amount }));
     const totalAmount = items.reduce((sum, item) => sum + item.amount, 0);

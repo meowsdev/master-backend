@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
+import { CLEARED_CODE } from './otp.service';
 import { PrismaService } from '../../prisma/prisma.service';
 
 // Revoked rows are kept briefly so reuse detection still recognises them.
@@ -23,6 +24,17 @@ export class TokenCleanupService {
       },
     });
     this.logger.log(`Deleted ${count} stale refresh tokens`);
+    return count;
+  }
+
+  /** A code nobody entered must not sit in the database after it expires either. */
+  @Cron(CronExpression.EVERY_HOUR)
+  async clearExpiredOtpCodes(): Promise<number> {
+    const { count } = await this.prisma.otpRequest.updateMany({
+      where: { codeHash: { not: null }, expiresAt: { lt: new Date() } },
+      data: { ...CLEARED_CODE },
+    });
+    if (count > 0) this.logger.log(`Cleared ${count} expired OTP codes`);
     return count;
   }
 }

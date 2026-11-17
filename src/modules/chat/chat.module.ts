@@ -8,10 +8,11 @@ import { JwtModule } from '@nestjs/jwt';
 import { RedisModule } from '../../redis/redis.module';
 import { ChatGateway } from './chat.gateway';
 import { ChatController } from './chat.controller';
+import { OrderConversationController } from './order-conversation.controller';
 
 @Module({
   imports: [PrismaModule, ConfigModule, JwtModule.register({}), RedisModule],
-  controllers: [ChatController],
+  controllers: [ChatController, OrderConversationController],
   providers: [ChatService, ChatBookingService, ChatSessionService, ChatGateway],
   exports: [ChatService, ChatBookingService, ChatSessionService],
 })

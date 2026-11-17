@@ -1,3 +1,4 @@
+import { assertNoPhoneNumber } from '../../common/contact-privacy';
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma, PriceUnit, UserRole } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -80,6 +81,8 @@ export class OrderPlacementService {
   }
 
   async placeOrder(dto: PlaceOrderDto, user: { id: string; role: UserRole }) {
+    // The provider reads this text, so it cannot carry the customer's phone number.
+    assertNoPhoneNumber(dto.description);
     const { subService, quote } = await this.priceSelection(dto);
 
     if (!this.locations.isValidLocation(dto.districtId, dto.upazilaId)) {

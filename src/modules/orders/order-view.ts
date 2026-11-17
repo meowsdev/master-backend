@@ -46,9 +46,25 @@ export interface AssigneeLabels {
   provider: string | null;
   /** The one name to show first: the technician, or with none the provider. */
   primary: string | null;
+  /** "@manik05": the provider's username. */
+  providerUsername: string | null;
+  /** The provider's company name; their own name when they have no company. */
+  providerName: string | null;
 }
 
-export function buildAssigneeLabels(order: AssigneeSource): AssigneeLabels {
+const NO_ASSIGNEE: AssigneeLabels = { technician: null, provider: null, primary: null, providerUsername: null, providerName: null };
+
+/** An order counts as accepted once a provider took it; before that nobody's name is shown. */
+export function isOrderAccepted(order: { orderStatus?: OrderStatus; acceptedAt?: Date | null }): boolean {
+  if (order.acceptedAt) return true;
+  const status = order.orderStatus;
+  return status === OrderStatus.ACCEPTED || status === OrderStatus.IN_PROGRESS || status === OrderStatus.COMPLETED || status === OrderStatus.DISPUTED;
+}
+
+export function buildAssigneeLabels(order: AssigneeSource, isAccepted = true): AssigneeLabels {
+  // The customer sees only the order id until a provider accepts.
+  if (!isAccepted) return NO_ASSIGNEE;
+
   const technicianUsername = order.technician?.user?.username;
   const technician = technicianUsername ? `@${technicianUsername}` : null;
 
@@ -56,7 +72,15 @@ export function buildAssigneeLabels(order: AssigneeSource): AssigneeLabels {
   const providerUsername = order.provider?.user?.username;
   const provider = company || (providerUsername ? `@${providerUsername}` : null);
 
-  return { technician, provider, primary: technician ?? provider };
+  const providerName = company || order.provider?.user?.name?.trim() || null;
+
+  return {
+    technician,
+    provider,
+    primary: technician ?? provider,
+    providerUsername: providerUsername ? `@${providerUsername}` : null,
+    providerName,
+  };
 }
 
 /** Shown on the customer's order tab once a provider has accepted: who is coming, and from where. */
@@ -88,13 +112,13 @@ export function buildAssignmentCard(order: AssigneeSource & { orderStatus?: Orde
   };
 }
 
-type OrderLike = AssigneeSource & { orderStatus?: OrderStatus; providerReview?: unknown; completedAt?: Date | null } & Partial<Parameters<typeof isOrderChatOpen>[0]>;
+type OrderLike = AssigneeSource & { orderStatus?: OrderStatus; providerReview?: unknown; completedAt?: Date | null; acceptedAt?: Date | null } & Partial<Parameters<typeof isOrderChatOpen>[0]>;
 
 const addOrderView = <T extends object>(order: T) => {
   const source = order as OrderLike;
   return {
     ...order,
-    assignee: buildAssigneeLabels(source),
+    assignee: buildAssigneeLabels(source, isOrderAccepted(source)),
     assignmentCard: buildAssignmentCard(source),
     // Needs orderStatus + revisions; list endpoints include both.
     isReviewPending: isReviewPending(source),
