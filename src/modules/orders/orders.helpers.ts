@@ -67,7 +67,7 @@ export const ORDER_RELATIONS_INCLUDE = {
   items: true,
   bookingDetail: true,
   paymentAndTip: true,
-  advancePayments: { select: { amount: true, method: true, createdAt: true }, orderBy: { createdAt: 'asc' } },
+  advancePayments: { select: { amount: true, method: true, totalAtPayment: true, dueAfter: true, createdAt: true }, orderBy: { createdAt: 'asc' } },
   revisions: true,
   providerReview: true,
 } satisfies Prisma.OrderInclude;

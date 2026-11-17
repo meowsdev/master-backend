@@ -4,7 +4,7 @@ import { OrderAdvancePaymentService } from './order-advance-payment.service';
 const CUSTOMER = { id: 'customer-user', role: 'CUSTOMER' as const };
 
 function build(overrides: Record<string, unknown> = {}, updateCount = 1) {
-  const order = { id: 'o1', orderStatus: 'IN_PROGRESS', dueAmount: 3700, advancePaid: 0, customer: { userId: CUSTOMER.id }, ...overrides };
+  const order = { id: 'o1', orderStatus: 'IN_PROGRESS', totalPrice: 3700, dueAmount: 3700, advancePaid: 0, customer: { userId: CUSTOMER.id }, ...overrides };
   const tx = { order: { updateMany: jest.fn().mockResolvedValue({ count: updateCount }) }, orderAdvancePayment: { create: jest.fn() } };
   const prisma = {
     order: { findUnique: jest.fn().mockResolvedValue(order) },
@@ -37,7 +37,7 @@ describe('OrderAdvancePaymentService', () => {
     const result = await service.pay('o1', { amount: 1000, method: 'NAGAD' }, CUSTOMER);
     expect(result).toEqual({ advancePaid: 1000, dueAmount: 2700 });
     expect(tx.order.updateMany).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ dueAmount: 2700, paymentStatus: 'PARTIAL' }) }));
-    expect(tx.orderAdvancePayment.create).toHaveBeenCalledWith({ data: expect.objectContaining({ amount: 1000, method: 'NAGAD' }) });
+    expect(tx.orderAdvancePayment.create).toHaveBeenCalledWith({ data: expect.objectContaining({ amount: 1000, method: 'NAGAD', totalAtPayment: 3700, dueAfter: 2700 }) });
   });
 
   it('marks the order paid when the advance covers everything', async () => {

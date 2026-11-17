@@ -21,7 +21,7 @@ export class OrderAdvancePaymentService {
   async pay(orderId: string, dto: PayAdvanceDto, actor: { id: string; role: UserRole }) {
     const order = await this.prisma.order.findUnique({
       where: { id: orderId },
-      select: { id: true, orderStatus: true, dueAmount: true, advancePaid: true, customer: { select: { userId: true } } },
+      select: { id: true, orderStatus: true, totalPrice: true, dueAmount: true, advancePaid: true, customer: { select: { userId: true } } },
     });
     if (!order) throw new NotFoundException('Order not found');
     if (order.customer.userId !== actor.id) throw new ForbiddenException('Only the customer of this order can pay');
@@ -50,7 +50,7 @@ export class OrderAdvancePaymentService {
       if (updated.count === 0) throw new ConflictException('The order changed while paying. Please check the amount and try again.');
 
       await tx.orderAdvancePayment.create({
-        data: { orderId, amount: dto.amount, method: dto.method as PaymentMode, transactionId: result.transactionId },
+        data: { orderId, amount: dto.amount, method: dto.method as PaymentMode, transactionId: result.transactionId, totalAtPayment: order.totalPrice, dueAfter: remaining },
       });
       return { advancePaid: Number(order.advancePaid) + dto.amount, dueAmount: remaining };
     });

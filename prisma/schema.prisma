@@ -774,6 +774,9 @@ model OrderAdvancePayment {
   amount        Decimal     @db.Decimal(10, 2)
   method        PaymentMode
   transactionId String
+  /// The bill and what was still due right after this payment, so the receipt stays true if the bill changes later.
+  totalAtPayment Decimal? @db.Decimal(10, 2)
+  dueAfter       Decimal? @db.Decimal(10, 2)
   createdAt     DateTime    @default(now())
 
   order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
