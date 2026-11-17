@@ -50,6 +50,7 @@ export class OrderCompletionService {
     }
 
     if (dto.paymentMode === 'ONLINE') {
+      if (dto.tipAmount) throw new BadRequestException('An online tip is paid by the customer in the app');
       return this.prisma.orderPaymentAndTip.upsert({
         where: { orderId },
         update: { paymentMode: PaymentMode.ONLINE, confirmationStatus: ConfirmationStatus.PENDING },
@@ -59,7 +60,7 @@ export class OrderCompletionService {
 
     // Cash: the provider collected the due amount on site, so the order closes without the customer doing anything.
     return this.prisma.$transaction((tx) =>
-      this.finishOrder(tx, order, { paymentMode: PaymentMode.CASH, tipAmount: 0, deductCommission: true }),
+      this.finishOrder(tx, order, { paymentMode: PaymentMode.CASH, tipAmount: dto.tipAmount ?? 0, deductCommission: true }),
     );
   }
 
@@ -121,6 +122,8 @@ export class OrderCompletionService {
         orderId: order.id,
         paymentMode: settlement.paymentMode,
         serviceAmountPaid: totalPrice,
+        tipAmount: settlement.tipAmount,
+        hasTip: settlement.tipAmount > 0,
         confirmationStatus: ConfirmationStatus.CONFIRMED,
       },
     });

@@ -1,6 +1,7 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { ExtraChargeStatus, OrderStatus, UserRole } from '@prisma/client';
 import { assertNoPhoneNumber } from '../../common/contact-privacy';
+import { COMMISSION_RATE } from '../orders/orders.helpers';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateExtraChargeDto } from './dto/create-extra-charge.dto';
 
@@ -87,6 +88,8 @@ export class OrderExtraChargeService {
         await tx.order.update({
           where: { id: order.id },
           data: {
+            // The platform's share grows with the job: approved extra work is commissioned like the rest.
+            adminCommission: { increment: Math.round(Number(request.totalAmount) * COMMISSION_RATE) },
             additionalPrice: { increment: request.totalAmount },
             totalPrice: { increment: request.totalAmount },
             dueAmount: { increment: request.totalAmount },

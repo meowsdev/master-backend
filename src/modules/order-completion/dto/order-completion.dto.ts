@@ -10,6 +10,14 @@ export class CompleteOrderDto {
   @ApiProperty({ enum: COMPLETION_PAYMENT_MODES })
   @IsIn(COMPLETION_PAYMENT_MODES)
   paymentMode!: (typeof COMPLETION_PAYMENT_MODES)[number];
+
+  /** Cash only: what the customer handed over as a tip. An online tip is paid in the app, not reported here. */
+  @ApiPropertyOptional({ example: 100, minimum: 0, maximum: MAX_TIP_AMOUNT })
+  @IsOptional()
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  @Max(MAX_TIP_AMOUNT)
+  tipAmount?: number;
 }
 
 export class PayOnlineDto {

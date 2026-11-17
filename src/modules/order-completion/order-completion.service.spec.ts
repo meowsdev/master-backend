@@ -57,6 +57,17 @@ describe('OrderCompletionService', () => {
     expect(tx.order.update).not.toHaveBeenCalled();
   });
 
+  it('records the tip the provider reports on a cash job', async () => {
+    const { service, tx } = build();
+    await service.complete('order-1', { paymentMode: 'CASH', tipAmount: 80 }, PROVIDER);
+    expect(tx.orderPaymentAndTip.upsert).toHaveBeenCalledWith(expect.objectContaining({ create: expect.objectContaining({ tipAmount: 80, hasTip: true }) }));
+  });
+
+  it('does not take a reported tip for an online payment', async () => {
+    const { service } = build();
+    await expect(service.complete('order-1', { paymentMode: 'ONLINE', tipAmount: 80 }, PROVIDER)).rejects.toBeInstanceOf(BadRequestException);
+  });
+
   it('refuses a second completion while the customer has not paid', async () => {
     const { service } = build({ paymentAndTip: { paymentMode: 'ONLINE', confirmationStatus: 'PENDING' } });
     await expect(service.complete('order-1', { paymentMode: 'CASH' }, PROVIDER)).rejects.toBeInstanceOf(ConflictException);

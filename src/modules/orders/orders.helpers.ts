@@ -67,9 +67,13 @@ export const ORDER_RELATIONS_INCLUDE = {
   items: true,
   bookingDetail: true,
   paymentAndTip: true,
+  advancePayments: { select: { amount: true, method: true, createdAt: true }, orderBy: { createdAt: 'asc' } },
   revisions: true,
   providerReview: true,
 } satisfies Prisma.OrderInclude;
+
+/** The platform keeps 10% of every job; on cash jobs the provider owes it, on online jobs the platform already holds it. */
+export const COMMISSION_RATE = 0.1;
 
 export interface PriceCalculationInput {
   originalPrice: number;
@@ -83,7 +87,7 @@ export function calculateOrderPrices(data: PriceCalculationInput) {
   const adminCommission =
     data.adminCommission !== undefined
       ? data.adminCommission
-      : Math.round(originalPrice * 0.1);
+      : Math.round(originalPrice * COMMISSION_RATE);
   const additionalPrice = data.additionalPrice ?? 0;
   const advancePaid = data.advancePaid ?? 0;
   const totalPrice = originalPrice + additionalPrice;

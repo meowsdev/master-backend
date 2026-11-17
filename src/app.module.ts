@@ -22,6 +22,8 @@ import { UploadsModule } from './modules/uploads/uploads.module';
 import { OrderPaymentTipModule } from './modules/order-payment-tip/order-payment-tip.module';
 import { OrderExtraChargeModule } from './modules/order-extra-charge/order-extra-charge.module';
 import { OrderCompletionModule } from './modules/order-completion/order-completion.module';
+import { OrderAdvancePaymentModule } from './modules/order-advance-payment/order-advance-payment.module';
+import { CustomerRatingModule } from './modules/customer-rating/customer-rating.module';
 import { ProviderWalletModule } from './modules/provider-wallet/provider-wallet.module';
 import { ServiceRevisionModule } from './modules/service-revision/service-revision.module';
 import { ProviderReviewModule } from './modules/provider-review/provider-review.module';
@@ -52,6 +54,8 @@ import { LocationsModule } from './modules/locations/locations.module';
     OrderPaymentTipModule,
     OrderExtraChargeModule,
     OrderCompletionModule,
+    OrderAdvancePaymentModule,
+    CustomerRatingModule,
     ProviderWalletModule,
     ServiceRevisionModule,
     ProviderReviewModule,

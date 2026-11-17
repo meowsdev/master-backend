@@ -42,11 +42,21 @@ describe('stripContactDetails', () => {
 });
 
 describe('containsPhoneNumber', () => {
-  it.each(['call me 01711111111', '+8801711111111', '017 1111 1111', '017-11-11-11-11', '০১৭১১১১১১১১', '(017) 11111111'])('catches %s', (text) => {
+  it.each(['call me 01711111111', '+8801711111111', '017 1111 1111', '017-11-11-11-11', '০১৭১১১১১১১১', '(017) 11111111', '+880 1711 111111', '88 017 1111 1111'])('catches %s', (text) => {
     expect(containsPhoneNumber(text)).toBe(true);
   });
 
-  it.each(['The AC needs 2 hours', 'Total ৳3700, paid 3000', 'order #25486', 'flat 12, road 5'])('allows %s', (text) => {
+  it.each([
+    'The AC needs 2 hours',
+    'Total ৳3700, paid 3000',
+    'order #25486',
+    'flat 12, road 5',
+    '৳১৫০০ আর ৩০০ আর ২০০০ লাগবে',
+    'total 3700 2100 1600 1500 2000',
+    'price 100 1500 2000 3000',
+    'bill 4300 tip 600 paid 3700',
+    'ami 10 30 e ashbo',
+  ])('allows %s', (text) => {
     expect(containsPhoneNumber(text)).toBe(false);
   });
 

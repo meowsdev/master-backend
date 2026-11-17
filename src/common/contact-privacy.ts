@@ -31,13 +31,24 @@ export function stripContactDetails<T>(value: T, viewerId: string | null): T {
 /** Bengali digits become ASCII so "০১৭১১১১১১১১" is caught like "01711111111". */
 const toAsciiDigits = (text: string) => text.replace(/[০-৯]/g, (digit) => String('০১২৩৪৫৬৭৮৯'.indexOf(digit)));
 
+const SEPARATOR = '[\\s\\-.()]*';
+
 /**
- * True when the text carries a phone number: ten or more digits once spaces, dashes, dots and
- * brackets between them are ignored ("017 11-11 11 11", "+880 1711111111", "০১৭১১১১১১১১").
+ * A Bangladeshi mobile number written with spaces, dashes or brackets: [+88] 01[3-9] and eight more
+ * digits. It must start at a number boundary (nothing but a separator before it), so a price list such
+ * as "3700 2100 1600 1500" cannot be read as one by gluing digits from different numbers together.
+ */
+const BD_MOBILE = new RegExp(
+  `(?<!\\d)(?:\\+?88${SEPARATOR})?0${SEPARATOR}1${SEPARATOR}[3-9](?:${SEPARATOR}\\d){8}`,
+);
+
+/**
+ * True when the text carries a phone number: ten or more digits written together, or a Bangladeshi
+ * mobile number written in groups ("017 1111 1111", "+880 1711 111111", "017-11-11-11-11", "০১৭১১১১১১১১").
  */
 export function containsPhoneNumber(text: string): boolean {
-  const joined = toAsciiDigits(text).replace(/(?<=\d)[\s\-.()]+(?=\d)/g, '');
-  return /\d{10,}/.test(joined);
+  const ascii = toAsciiDigits(text);
+  return /\d{10,}/.test(ascii) || BD_MOBILE.test(ascii);
 }
 
 /** Throws unless the text is free of phone numbers. Used wherever one side writes text the other reads. */

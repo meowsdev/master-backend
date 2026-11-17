@@ -190,10 +190,13 @@ model CustomerProfile {
   address     String?
   gender      Gender?
   dateOfBirth DateTime? @db.Date
+  /// Average of the ratings providers gave this customer (CustomerRating); 0 until the first one.
+  rating      Decimal   @default(0.0) @db.Decimal(3, 2)
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
   user               User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  customerRatings    CustomerRating[]
   chatSessions       ChatSession[]       @relation("CustomerProfileChatSessions")
   activeChatSlots    ActiveChatSlot[]
   orders             Order[]
@@ -552,6 +555,8 @@ model Order {
   items          OrderItem[]
   messages       Message[]
   extraCharges   ExtraChargeRequest[]
+  customerRating CustomerRating?
+  advancePayments OrderAdvancePayment[]
 
   @@index([providerId])
   @@index([customerId])
@@ -741,6 +746,37 @@ model ExtraChargeRequest {
 
   order       Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
   requestedBy User  @relation("ExtraChargeRequester", fields: [requestedById], references: [id], onDelete: Restrict)
+
+  @@index([orderId])
+}
+
+/// The provider's rating of the customer once an order is done. One per order, never edited.
+model CustomerRating {
+  id         String   @id @default(uuid())
+  orderId    String   @unique
+  customerId String
+  ratedById  String
+  rating     Int
+  comment    String?  @db.VarChar(300)
+  createdAt  DateTime @default(now())
+
+  order    Order           @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  customer CustomerProfile @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([customerId])
+}
+
+/// Money the customer paid before the final settlement (before the work starts or in the middle of it).
+/// The final payment is the order's due, so these amounts are already subtracted from it.
+model OrderAdvancePayment {
+  id            String      @id @default(uuid())
+  orderId       String
+  amount        Decimal     @db.Decimal(10, 2)
+  method        PaymentMode
+  transactionId String
+  createdAt     DateTime    @default(now())
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
 
   @@index([orderId])
 }
