@@ -226,6 +226,7 @@ model ProviderProfile {
   technicianProfiles TechnicianProfile[] @relation("ProviderAgencyTechnicians")
   activeChatSlots    ActiveChatSlot[]
   orders             Order[]
+  orderOffers        OrderOffer[]
   providerReviews    ProviderReview[]
   customerRetentions CustomerRetention[]
 }
@@ -557,6 +558,7 @@ model Order {
   extraCharges   ExtraChargeRequest[]
   customerRating CustomerRating?
   advancePayments OrderAdvancePayment[]
+  offers         OrderOffer[]
 
   @@index([providerId])
   @@index([customerId])
@@ -782,4 +784,32 @@ model OrderAdvancePayment {
   order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
 
   @@index([orderId])
+}
+
+enum OfferStatus {
+  OFFERED
+  ACCEPTED
+  DECLINED
+  EXPIRED
+  WITHDRAWN
+}
+
+/// A new order offered to one provider. Several providers are offered the same order at once (a "wave");
+/// the first to accept gets it and the rest are withdrawn. A wave nobody answers in time is followed by the next.
+model OrderOffer {
+  id          String      @id @default(uuid())
+  orderId     String
+  providerId  String
+  wave        Int
+  status      OfferStatus @default(OFFERED)
+  expiresAt   DateTime
+  respondedAt DateTime?
+  createdAt   DateTime    @default(now())
+
+  order    Order           @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  provider ProviderProfile @relation(fields: [providerId], references: [id], onDelete: Cascade)
+
+  @@unique([orderId, providerId])
+  @@index([orderId, status])
+  @@index([providerId, status])
 }

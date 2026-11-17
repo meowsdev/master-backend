@@ -16,6 +16,16 @@ function build() {
   return { service: new OrderExtraChargeService(prisma as never), tx };
 }
 
+describe('OrderExtraChargeService.list', () => {
+  it('lets an admin read the requests but not a stranger', async () => {
+    const { service } = build();
+    const prisma = (service as unknown as { prisma: { extraChargeRequest: { findMany: jest.Mock } } }).prisma;
+    prisma.extraChargeRequest.findMany = jest.fn().mockResolvedValue([]);
+    await expect(service.list('o1', { id: 'admin', role: 'ADMIN' })).resolves.toEqual([]);
+    await expect(service.list('o1', { id: 'stranger', role: 'CUSTOMER' })).rejects.toThrow('not part of this order');
+  });
+});
+
 describe('OrderExtraChargeService.respond', () => {
   it('adds the approved amount to the bill and to the platform commission', async () => {
     const { service, tx } = build();

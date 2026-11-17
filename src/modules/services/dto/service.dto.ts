@@ -22,7 +22,8 @@ export class ServiceDisplayFieldsDto {
 
   @ApiPropertyOptional({ example: 'https://images.example.com/ac-repair.jpg' })
   @IsOptional()
-  @IsUrl({ protocols: ['http', 'https'], require_protocol: true })
+  // require_tld off: an upload link on a dev server is http://localhost:5000/..., which has no top-level domain.
+  @IsUrl({ protocols: ['http', 'https'], require_protocol: true, require_tld: false })
   @MaxLength(500)
   imageUrl?: string;
 

@@ -1,11 +1,13 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
 import { UserRole, OrderStatus } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { OrderDispatchService } from '../order-dispatch/order-dispatch.service';
 import { assertCanManageTechnicians } from '../auth/role-policy';
 import { createWithUniqueReference } from './order-reference';
 import { acceptanceStamp, completionStamp } from './order-view';
@@ -26,7 +28,10 @@ import {
 
 @Injectable()
 export class OrdersService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly dispatch: OrderDispatchService,
+  ) {}
 
   async create(data: CreateCustomOrderDto, user?: { id: string; role: UserRole }) {
     // A customer (or anyone else) can't choose the technician; only an admin assigns one.
@@ -57,71 +62,19 @@ export class OrdersService {
     }
     await assertCustomer(this.prisma, customerId);
 
-    // 2. Skill Match Engine: Find active provider who has selected this service skill
+    // 2. Matching. Without a named provider the order is offered to a group of eligible providers at once
+    // (see OrderDispatchService); the first to accept gets it. A provider with no matching skill is never asked.
     let providerId = data.providerId;
+    let isOfferedToGroup = false;
     if (!providerId) {
-      // Find active provider with this skill, prioritizing other providers over the current customer
-      const assignee = await this.prisma.serviceAssignee.findFirst({
-        where: {
-          serviceId: data.serviceId,
-          isActive: true,
-          user: {
-            role: UserRole.PROVIDER,
-            status: 'ACTIVE',
-            ...(user?.id ? { id: { not: user.id } } : {}),
-            providerProfile: {
-              isAvailable: true,
-              isBlockedForNegative: false,
-            },
-          },
-        },
-        include: {
-          user: {
-            include: {
-              providerProfile: true,
-            },
-          },
-        },
-      });
-
-      if (assignee?.user?.providerProfile?.id) {
-        providerId = assignee.user.providerProfile.id;
-      } else {
-        // Fallback: Pick any active, available provider with role PROVIDER
-        const fallbackProvider = await this.prisma.providerProfile.findFirst({
-          where: {
-            isAvailable: true,
-            isBlockedForNegative: false,
-            user: {
-              role: UserRole.PROVIDER,
-              status: 'ACTIVE',
-              ...(user?.id ? { id: { not: user.id } } : {}),
-            },
-          },
-          select: { id: true },
-        });
-
-        if (fallbackProvider) {
-          providerId = fallbackProvider.id;
-        } else {
-          // Final fallback to any active provider with role PROVIDER
-          const anyProvider = await this.prisma.providerProfile.findFirst({
-            where: {
-              user: {
-                role: UserRole.PROVIDER,
-                status: 'ACTIVE',
-              },
-            },
-            select: { id: true },
-          });
-          if (!anyProvider) {
-            throw new BadRequestException(
-              'Currently no service provider is available for this service. Please try again shortly.',
-            );
-          }
-          providerId = anyProvider.id;
-        }
+      const customerRow = await this.prisma.customerProfile.findUnique({ where: { id: customerId }, select: { userId: true } });
+      const eligibleIds = await this.dispatch.findEligibleProviderIds({ serviceId: data.serviceId, customerUserId: customerRow?.userId });
+      if (eligibleIds.length === 0) {
+        throw new BadRequestException('No service provider offers this service right now. Please try again shortly.');
       }
+      // The order row needs a provider; this one only stands in until someone accepts and replaces it.
+      providerId = eligibleIds[0];
+      isOfferedToGroup = true;
     }
 
     await assertProvider(this.prisma, providerId);
@@ -132,7 +85,7 @@ export class OrdersService {
 
     const prices = calculateOrderPrices(data);
 
-    return createWithUniqueReference((referenceCode) =>
+    const createdOrder = await createWithUniqueReference((referenceCode) =>
       this.prisma.order.create({
         data: {
           referenceCode,
@@ -145,6 +98,9 @@ export class OrdersService {
         include: ORDER_RELATIONS_INCLUDE,
       }),
     );
+
+    if (isOfferedToGroup) await this.dispatch.dispatchNextWave(createdOrder.id);
+    return createdOrder;
   }
 
 
@@ -170,30 +126,23 @@ export class OrdersService {
         });
       }
 
-      // Fetch active service skills for this provider
-      const mySkills = await this.prisma.serviceAssignee.findMany({
-        where: { userId: user.id, isActive: true },
-        select: { serviceId: true },
-      });
-      const skillServiceIds = mySkills.map((s) => s.serviceId);
-
-      // Strict Rule: If provider has 0 active skills, they receive ZERO pending job dispatches
-      const whereConditions: any[] = [{ providerId: provider.id }];
-      if (skillServiceIds.length > 0) {
-        whereConditions.push({
-          orderStatus: OrderStatus.PENDING,
-          serviceId: { in: skillServiceIds },
-        });
-      }
-
-      // Return assigned orders and open pending job dispatches strictly matching provider skills
-      return this.prisma.order.findMany({
+      // What a provider sees: their own orders once they have taken them (a cancelled one only if they had),
+      // plus new orders currently offered to them. A provider with no matching skill is never offered any,
+      // so they see no new orders. Other providers' offers are never exposed.
+      const now = new Date();
+      const orders = await this.prisma.order.findMany({
         where: {
-          OR: whereConditions,
+          OR: [
+            { providerId: provider.id, orderStatus: { notIn: [OrderStatus.PENDING, OrderStatus.CANCELLED] } },
+            { providerId: provider.id, orderStatus: OrderStatus.CANCELLED, acceptedAt: { not: null } },
+            { orderStatus: OrderStatus.PENDING, offers: { some: { providerId: provider.id, status: 'OFFERED', expiresAt: { gt: now } } } },
+          ],
         },
         orderBy: { createdAt: 'desc' },
-        include: ORDER_RELATIONS_INCLUDE,
+        include: { ...ORDER_RELATIONS_INCLUDE, offers: { where: { providerId: provider.id, status: 'OFFERED' }, select: { expiresAt: true } } },
       });
+      // `myOfferExpiresAt`: when the offer on this order runs out, so the screen can count down.
+      return orders.map(({ offers, ...order }) => ({ ...order, myOfferExpiresAt: order.orderStatus === OrderStatus.PENDING ? (offers[0]?.expiresAt ?? null) : null }));
     }
 
     if (effectiveRole === UserRole.TECHNICIAN) {
@@ -380,37 +329,27 @@ export class OrdersService {
   ) {
     const order = await this.findOne(id);
 
-    // If a provider is accepting/starting work on a PENDING job:
+    // A provider taking a new order. Several providers were offered it, so the first to accept wins:
+    // the claim only succeeds while the order is still PENDING, and everyone else's offer is withdrawn.
     if (
-      (user.role === UserRole.PROVIDER || user.role === UserRole.TECHNICIAN) &&
-      order.orderStatus === 'PENDING' &&
-      (data.orderStatus === 'IN_PROGRESS' || data.orderStatus === 'ACCEPTED')
+      user.role === UserRole.PROVIDER &&
+      order.orderStatus === OrderStatus.PENDING &&
+      (data.orderStatus === OrderStatus.IN_PROGRESS || data.orderStatus === OrderStatus.ACCEPTED)
     ) {
-      let provider = await this.prisma.providerProfile.findUnique({
-        where: { userId: user.id },
-        select: { id: true },
-      });
-      if (!provider) {
-        provider = await this.prisma.providerProfile.create({
-          data: { userId: user.id, isAvailable: true, isBlockedForNegative: false },
-          select: { id: true },
-        });
-      }
+      const provider = await this.prisma.providerProfile.findUnique({ where: { userId: user.id }, select: { id: true } });
+      if (!provider) throw new ForbiddenException('Provider profile not found');
+      await assertProvider(this.prisma, provider.id);
+      await this.dispatch.assertLiveOffer(id, provider.id);
 
       return this.prisma.$transaction(async (tx) => {
-        const updatedOrder = await tx.order.update({
-          where: { id },
-          data: {
-            providerId: provider.id,
-            orderStatus: data.orderStatus,
-            ...completionStamp(data.orderStatus),
-            ...acceptanceStamp(order.orderStatus, data.orderStatus),
-          },
-          include: ORDER_RELATIONS_INCLUDE,
+        const claimed = await tx.order.updateMany({
+          where: { id, orderStatus: OrderStatus.PENDING },
+          data: { providerId: provider.id, orderStatus: data.orderStatus, ...acceptanceStamp(order.orderStatus, data.orderStatus) },
         });
+        if (claimed.count === 0) throw new ConflictException('Another provider has already accepted this order');
 
-        await handleCommissionBalance(tx, order, data.orderStatus);
-        return updatedOrder;
+        await this.dispatch.closeOffersAfterAcceptance(tx, id, provider.id);
+        return tx.order.findUniqueOrThrow({ where: { id }, include: ORDER_RELATIONS_INCLUDE });
       });
     }
 

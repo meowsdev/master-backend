@@ -61,8 +61,9 @@ export class OrderExtraChargeService {
 
   async list(orderId: string, actor: Actor) {
     const order = await this.loadOrder(orderId);
+    // Reading is open to the order's parties and to an administrator; answering stays with the customer only.
     const isParty = [order.customer.userId, order.provider.userId, order.technician?.userId].includes(actor.id);
-    if (!isParty) throw new ForbiddenException('You are not part of this order');
+    if (!isParty && actor.role !== UserRole.ADMIN) throw new ForbiddenException('You are not part of this order');
 
     return this.prisma.extraChargeRequest.findMany({ where: { orderId }, orderBy: { createdAt: 'asc' } });
   }

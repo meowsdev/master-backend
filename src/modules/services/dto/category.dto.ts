@@ -7,10 +7,11 @@ export class CreateCategoryDto {
   @IsNotEmpty()
   name!: string;
 
-  @ApiProperty({ example: 'ac-repair-services' })
+  /** Left out, it is made from the name. */
+  @ApiProperty({ example: 'ac-repair-services', required: false })
   @IsString()
-  @IsNotEmpty()
-  slug!: string;
+  @IsOptional()
+  slug?: string;
 
   @ApiProperty({
     example: 'All kinds of AC servicing & repair',

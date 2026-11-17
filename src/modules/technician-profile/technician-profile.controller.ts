@@ -39,6 +39,14 @@ export class TechnicianProfileController {
 
   // ---- Admin only: creating technicians and attaching them to providers ----
 
+  @Get()
+  @Roles(...TECHNICIAN_MANAGER_ROLES)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'ADMIN: list all technicians with their provider' })
+  list() {
+    return this.technicianProfileService.listForAdmin();
+  }
+
   @Post()
   @Roles(...TECHNICIAN_MANAGER_ROLES)
   @HttpCode(HttpStatus.CREATED)

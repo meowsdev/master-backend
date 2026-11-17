@@ -1,11 +1,12 @@
 import { Controller, ForbiddenException, Get, NotFoundException, Param, ParseUUIDPipe, Req, UseGuards } from '@nestjs/common';
+import { UserRole } from '@prisma/client';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ChatSessionService } from './chat-session.service';
 
 interface AuthenticatedRequest {
-  user: { id: string };
+  user: { id: string; role: string };
 }
 
 @ApiTags('Chat')
@@ -36,6 +37,16 @@ export class OrderConversationController {
       },
     });
     if (!order) throw new NotFoundException('Order not found');
+
+    // An administrator watches and joins the conversation that already exists; they never start one.
+    if (req.user.role === UserRole.ADMIN) {
+      const category = await this.prisma.service.findUnique({ where: { id: order.serviceId }, select: { categoryId: true } });
+      const existing = category
+        ? await this.prisma.chatSession.findUnique({ where: { customerProfileId_categoryId: { customerProfileId: order.customerId, categoryId: category.categoryId } } })
+        : null;
+      if (!existing) throw new NotFoundException('This order has no chat yet');
+      return existing;
+    }
 
     const isHandlingOrder = order.provider.userId === req.user.id || order.technician?.userId === req.user.id;
     if (!isHandlingOrder) throw new ForbiddenException('Only the provider handling this order can open its chat');

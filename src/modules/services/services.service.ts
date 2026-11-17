@@ -14,7 +14,8 @@ export class ServicesService {
   constructor(private readonly prisma: PrismaService) {}
 
   async createCategory(data: CreateCategoryDto) {
-    const slug = data.slug || slugify(data.name, { lower: true, strict: true });
+    // A Bengali-only name slugifies to nothing, so a short unique id stands in.
+    const slug = data.slug || slugify(data.name, { lower: true, strict: true }) || `category-${Date.now().toString(36)}`;
 
     const existingCategory = await this.prisma.serviceCategory.findFirst({
       where: {

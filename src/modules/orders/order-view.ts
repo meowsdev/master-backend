@@ -121,6 +121,8 @@ const addOrderView = <T extends object>(order: T) => {
     assignee: buildAssigneeLabels(source, isOrderAccepted(source)),
     assignmentCard: buildAssignmentCard(source),
     // Needs orderStatus + revisions; list endpoints include both.
+    // False while the order is only offered to providers: the provider on the row is a stand-in until someone accepts.
+    isAccepted: isOrderAccepted(source),
     isReviewPending: isReviewPending(source),
     isChatOpen: source.orderStatus && source.revisions ? isOrderChatOpen({ orderStatus: source.orderStatus, revisions: source.revisions }) : undefined,
   };

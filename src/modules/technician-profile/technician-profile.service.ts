@@ -70,6 +70,17 @@ export class TechnicianProfileService {
     });
   }
 
+  /** Every technician with the provider agency they work under (admin screen). */
+  listForAdmin() {
+    return this.prisma.technicianProfile.findMany({
+      orderBy: { createdAt: 'desc' },
+      include: {
+        user: { select: { id: true, name: true, username: true, mobileNumber: true, status: true } },
+        providerAgency: { select: { id: true, companyName: true, user: { select: { name: true, username: true } } } },
+      },
+    });
+  }
+
   async assignAgency(profileId: string, providerAgencyId: string | null) {
     await this.assertExists(profileId);
     if (providerAgencyId) await this.assertProviderAgency(providerAgencyId);

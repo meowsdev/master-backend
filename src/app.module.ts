@@ -22,6 +22,7 @@ import { UploadsModule } from './modules/uploads/uploads.module';
 import { OrderPaymentTipModule } from './modules/order-payment-tip/order-payment-tip.module';
 import { OrderExtraChargeModule } from './modules/order-extra-charge/order-extra-charge.module';
 import { OrderCompletionModule } from './modules/order-completion/order-completion.module';
+import { AdminDirectoryModule } from './modules/admin-directory/admin-directory.module';
 import { OrderAdvancePaymentModule } from './modules/order-advance-payment/order-advance-payment.module';
 import { CustomerRatingModule } from './modules/customer-rating/customer-rating.module';
 import { ProviderWalletModule } from './modules/provider-wallet/provider-wallet.module';
@@ -54,6 +55,7 @@ import { LocationsModule } from './modules/locations/locations.module';
     OrderPaymentTipModule,
     OrderExtraChargeModule,
     OrderCompletionModule,
+    AdminDirectoryModule,
     OrderAdvancePaymentModule,
     CustomerRatingModule,
     ProviderWalletModule,

@@ -3,7 +3,7 @@ import { UserRole } from '@prisma/client';
 import { OrdersService } from './orders.service';
 
 /** Prisma is never reached: the role check must run (and fail) first. */
-const service = new OrdersService({} as never);
+const service = new OrdersService({} as never, {} as never);
 const technicianId = 'c1b5f10e-656a-4d4f-8f63-7c5d60fb3d5d';
 
 describe('assigning a technician to an order is ADMIN only', () => {
