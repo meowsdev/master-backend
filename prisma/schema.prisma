@@ -158,6 +158,7 @@ model User {
   serviceAssignments    ServiceAssignee[]
   chatParticipants      ChatParticipant[]
   sentMessages          Message[]          @relation("SentMessages")
+  extraChargeRequests   ExtraChargeRequest[] @relation("ExtraChargeRequester")
   sentChatAuditLogs     ChatAuditLog[]     @relation("ChatAuditSender")
   customerChatSessions  ChatSession[]      @relation("ChatSessionCustomer")
   counselorChatSessions ChatSession[]      @relation("ChatSessionCounselor")
@@ -520,6 +521,8 @@ model Order {
   /// Customer-facing reference, e.g. A94K2B. Random, unique, never reused.
   referenceCode   String        @unique @db.VarChar(6)
   completedAt     DateTime?
+  /// When a provider first took the order; the customer sees how long that took.
+  acceptedAt      DateTime?
   providerId      String
   customerId      String
   technicianId    String?
@@ -546,6 +549,7 @@ model Order {
   bookingDetail  OrderBookingDetail?
   items          OrderItem[]
   messages       Message[]
+  extraCharges   ExtraChargeRequest[]
 
   @@index([providerId])
   @@index([customerId])
@@ -711,4 +715,30 @@ model OrderItem {
 
   @@index([orderId])
   @@index([subServiceId])
+}
+
+enum ExtraChargeStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+/// Extra work found on site. Sits outside the order price until the customer approves it.
+model ExtraChargeRequest {
+  id            String            @id @default(uuid())
+  orderId       String
+  requestedById String
+  /// [{ label, amount }] frozen at request time.
+  items         Json
+  totalAmount   Decimal           @db.Decimal(10, 2)
+  /// Order total when the request was made, so the card can show "previous + new = new total".
+  previousTotal Decimal           @db.Decimal(10, 2)
+  status        ExtraChargeStatus @default(PENDING)
+  respondedAt   DateTime?
+  createdAt     DateTime          @default(now())
+
+  order       Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  requestedBy User  @relation("ExtraChargeRequester", fields: [requestedById], references: [id], onDelete: Restrict)
+
+  @@index([orderId])
 }

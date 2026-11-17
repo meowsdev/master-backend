@@ -8,7 +8,7 @@ import { UserRole, OrderStatus } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { assertCanManageTechnicians } from '../auth/role-policy';
 import { createWithUniqueReference } from './order-reference';
-import { completionStamp } from './order-view';
+import { acceptanceStamp, completionStamp } from './order-view';
 import { CreateCustomOrderDto } from './dto/create-custom-order.dto';
 import {
   UpdateOrderDto,
@@ -326,6 +326,7 @@ export class OrdersService {
           technicianId: data.technicianId,
           orderStatus: data.orderStatus,
           ...completionStamp(data.orderStatus),
+          ...acceptanceStamp(order.orderStatus, data.orderStatus),
           paymentStatus: data.paymentStatus,
           ...prices,
           priceEditCount: isPriceEdited ? { increment: 1 } : undefined,
@@ -361,6 +362,7 @@ export class OrdersService {
         data: {
           orderStatus: data.orderStatus,
           ...completionStamp(data.orderStatus),
+          ...acceptanceStamp(order.orderStatus, data.orderStatus),
         },
         include: ORDER_RELATIONS_INCLUDE,
       });
@@ -402,6 +404,7 @@ export class OrdersService {
             providerId: provider.id,
             orderStatus: data.orderStatus,
             ...completionStamp(data.orderStatus),
+            ...acceptanceStamp(order.orderStatus, data.orderStatus),
           },
           include: ORDER_RELATIONS_INCLUDE,
         });

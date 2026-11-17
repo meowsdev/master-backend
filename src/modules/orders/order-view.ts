@@ -11,6 +11,12 @@ export function completionStamp(status?: OrderStatus | string) {
   return status === OrderStatus.COMPLETED ? { completedAt: new Date() } : {};
 }
 
+/** Stamp the moment a PENDING order is first taken (accepted or started). Empty for every other change. */
+export function acceptanceStamp(currentStatus: OrderStatus | string, newStatus?: OrderStatus | string) {
+  const isTaken = newStatus === OrderStatus.ACCEPTED || newStatus === OrderStatus.IN_PROGRESS;
+  return currentStatus === OrderStatus.PENDING && isTaken ? { acceptedAt: new Date() } : {};
+}
+
 interface NamedUser {
   name?: string | null;
   username?: string | null;
