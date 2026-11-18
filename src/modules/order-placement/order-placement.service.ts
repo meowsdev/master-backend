@@ -98,6 +98,7 @@ export class OrderPlacementService {
     const order = await this.orders.create(
       { serviceId: subService.id, originalPrice: quote.total },
       user,
+      { districtId: dto.districtId, upazilaId: dto.upazilaId },
     );
 
     const quantity = quote.lines[0].count;

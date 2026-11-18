@@ -102,6 +102,13 @@ export class ChatGateway
   handleConnection(client: Socket) {
     const userId = client.data?.userId || 'unknown';
     this.logger.log(`Socket client connected: ${client.id} (user: ${userId})`);
+    // One private room per user: order offers and other personal alerts are addressed to it.
+    if (client.data?.userId) void client.join(`user:${client.data.userId}`);
+  }
+
+  /** Sends an event to every open tab of one user, and to nobody else. */
+  publishToUser(userId: string, event: string, payload: unknown) {
+    this.server.to(`user:${userId}`).emit(event, payload);
   }
 
   handleDisconnect(client: Socket) {

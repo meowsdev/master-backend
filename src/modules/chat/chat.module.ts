@@ -14,6 +14,6 @@ import { OrderConversationController } from './order-conversation.controller';
   imports: [PrismaModule, ConfigModule, JwtModule.register({}), RedisModule],
   controllers: [ChatController, OrderConversationController],
   providers: [ChatService, ChatBookingService, ChatSessionService, ChatGateway],
-  exports: [ChatService, ChatBookingService, ChatSessionService],
+  exports: [ChatService, ChatBookingService, ChatSessionService, ChatGateway],
 })
 export class ChatModule {}

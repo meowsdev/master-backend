@@ -6,8 +6,8 @@ const later = (seconds: number) => new Date(NOW.getTime() + seconds * 1000);
 
 interface Offer { providerId: string; wave: number; status: string; expiresAt: Date }
 
-function build(options: { orderStatus?: string; offers?: Offer[]; eligible?: string[] } = {}) {
-  const order = { orderStatus: options.orderStatus ?? 'PENDING', serviceId: 's1', customer: { userId: 'customer-user' }, offers: options.offers ?? [] };
+function build(options: { orderStatus?: string; offers?: Offer[]; eligible?: string[]; location?: { districtId: number; upazilaId: number } | null } = {}) {
+  const order = { orderStatus: options.orderStatus ?? 'PENDING', serviceId: 's1', customer: { userId: 'customer-user' }, bookingDetail: options.location ?? null, offers: options.offers ?? [] };
   const tx = {
     $queryRaw: jest.fn(),
     order: { findUnique: jest.fn().mockResolvedValue(order) },
@@ -21,7 +21,8 @@ function build(options: { orderStatus?: string; offers?: Offer[]; eligible?: str
     orderOffer: { ...tx.orderOffer, findUnique: jest.fn(), count: jest.fn().mockResolvedValue(0) },
     $transaction: jest.fn((callback: (client: typeof tx) => unknown) => callback(tx)),
   };
-  return { service: new OrderDispatchService(prisma as never), tx, prisma };
+  const gateway = { publishToUser: jest.fn() };
+  return { service: new OrderDispatchService(prisma as never, gateway as never), tx, prisma, gateway };
 }
 
 describe('OrderDispatchService', () => {
@@ -128,6 +129,50 @@ describe('OrderDispatchService', () => {
       prisma.providerProfile.findUnique.mockResolvedValue({ id: 'p1' });
       prisma.orderOffer.updateMany.mockResolvedValue({ count: 0 });
       await expect(service.declineOffer('o1', { id: 'u', role: 'PROVIDER' })).rejects.toBeInstanceOf(ConflictException);
+    });
+  });
+
+  describe('where the work is done', () => {
+    const location = { districtId: 7, upazilaId: 70 };
+
+    it('asks the providers of the order\'s upazila first', async () => {
+      const { service, tx } = build({ location });
+      await service.dispatchNextWave('o1');
+      expect(tx.providerProfile.findMany.mock.calls[0][0].where.serviceAreas).toEqual({ some: { upazilaId: 70 } });
+    });
+
+    it('widens to the district only when nobody in the upazila is left', async () => {
+      const { service, tx } = build({ location });
+      tx.providerProfile.findMany.mockResolvedValueOnce([]).mockResolvedValueOnce([{ id: 'p9' }]);
+      expect(await service.dispatchNextWave('o1')).toBe(1);
+      expect(tx.providerProfile.findMany.mock.calls[1][0].where.serviceAreas).toEqual({ some: { districtId: 7 } });
+    });
+
+    it('offers nothing when no provider covers the upazila or the district', async () => {
+      const { service, tx } = build({ location });
+      tx.providerProfile.findMany.mockResolvedValue([]);
+      expect(await service.dispatchNextWave('o1')).toBe(0);
+    });
+
+    it('lets the caller hand the location over before the booking details exist', async () => {
+      const { service, tx } = build({ location: null });
+      await service.dispatchNextWave('o1', location);
+      expect(tx.providerProfile.findMany.mock.calls[0][0].where.serviceAreas).toEqual({ some: { upazilaId: 70 } });
+    });
+
+    it('skips the area check for an order that has no location', async () => {
+      const { service, tx } = build({ location: null });
+      await service.dispatchNextWave('o1');
+      expect(tx.providerProfile.findMany.mock.calls[0][0].where.serviceAreas).toBeUndefined();
+    });
+
+    it('tells each offered provider\'s app about the order', async () => {
+      const { service, prisma, gateway } = build({ location });
+      prisma.order.findUnique = jest.fn().mockResolvedValueOnce({ orderStatus: 'PENDING', serviceId: 's1', customer: { userId: 'c' }, bookingDetail: location, offers: [] }).mockResolvedValueOnce({ referenceCode: 'ORD-1', service: { name: 'AC Repair' } });
+      prisma.providerProfile.findMany = jest.fn().mockResolvedValue([{ userId: 'u1' }, { userId: 'u2' }]);
+      await service.dispatchNextWave('o1');
+      expect(gateway.publishToUser).toHaveBeenCalledWith('u1', 'orderOffer', expect.objectContaining({ orderId: 'o1', serviceName: 'AC Repair' }));
+      expect(gateway.publishToUser).toHaveBeenCalledTimes(2);
     });
   });
 });

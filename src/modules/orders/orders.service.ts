@@ -7,7 +7,7 @@ import {
 } from '@nestjs/common';
 import { UserRole, OrderStatus } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
-import { OrderDispatchService } from '../order-dispatch/order-dispatch.service';
+import { OrderDispatchService, ServiceLocation } from '../order-dispatch/order-dispatch.service';
 import { assertCanManageTechnicians } from '../auth/role-policy';
 import { createWithUniqueReference } from './order-reference';
 import { acceptanceStamp, completionStamp } from './order-view';
@@ -33,7 +33,11 @@ export class OrdersService {
     private readonly dispatch: OrderDispatchService,
   ) {}
 
-  async create(data: CreateCustomOrderDto, user?: { id: string; role: UserRole }) {
+  /**
+   * `serviceLocation` is where the work will be done (the customer's choice on the order, not their
+   * profile address). It decides which providers hear about the order.
+   */
+  async create(data: CreateCustomOrderDto, user?: { id: string; role: UserRole }, serviceLocation?: ServiceLocation) {
     // A customer (or anyone else) can't choose the technician; only an admin assigns one.
     if (data.technicianId !== undefined) assertCanManageTechnicians(user?.role);
 
@@ -68,9 +72,13 @@ export class OrdersService {
     let isOfferedToGroup = false;
     if (!providerId) {
       const customerRow = await this.prisma.customerProfile.findUnique({ where: { id: customerId }, select: { userId: true } });
-      const eligibleIds = await this.dispatch.findEligibleProviderIds({ serviceId: data.serviceId, customerUserId: customerRow?.userId });
+      const eligibleIds = await this.dispatch.findEligibleProviderIds({ serviceId: data.serviceId, customerUserId: customerRow?.userId, location: serviceLocation });
       if (eligibleIds.length === 0) {
-        throw new BadRequestException('No service provider offers this service right now. Please try again shortly.');
+        throw new BadRequestException(
+          serviceLocation
+            ? 'No service provider covers this area for this service right now. Please try another area or try again shortly.'
+            : 'No service provider offers this service right now. Please try again shortly.',
+        );
       }
       // The order row needs a provider; this one only stands in until someone accepts and replaces it.
       providerId = eligibleIds[0];
@@ -99,7 +107,7 @@ export class OrdersService {
       }),
     );
 
-    if (isOfferedToGroup) await this.dispatch.dispatchNextWave(createdOrder.id);
+    if (isOfferedToGroup) await this.dispatch.dispatchNextWave(createdOrder.id, serviceLocation);
     return createdOrder;
   }
 

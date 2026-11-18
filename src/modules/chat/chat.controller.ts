@@ -3,6 +3,7 @@ import {
   Body,
   Controller,
   ForbiddenException,
+  GoneException,
   Get,
   HttpCode,
   HttpStatus,
@@ -32,7 +33,6 @@ import { ChatGateway } from './chat.gateway';
 import { ChatService } from './chat.service';
 import { CreateChatSessionDto } from './dto/create-chatSession.dto';
 import { SendMessageDto } from './dto/send-message.dto';
-import { InChatBookingDto } from './dto/in-chat-booking.dto';
 
 export class AddChatParticipantDto {
   @ApiProperty({ format: 'uuid' })
@@ -203,22 +203,15 @@ export class ChatController {
     return message;
   }
 
+  /**
+   * Retired: this route made an order with a hand-picked provider and never offered it through order
+   * dispatch, so no provider covering the area ever saw it. Orders are placed from the Place Order panel
+   * (POST /order-placement), which sets the service location and dispatches by area.
+   */
   @Post('orders/in-chat-booking')
-  @HttpCode(HttpStatus.CREATED)
-  @ApiOperation({
-    summary: 'Instantly place an order from within the chat conversation',
-  })
-  async createInChatBooking(
-    @Req() req: AuthenticatedRequest,
-    @Body() dto: InChatBookingDto,
-  ) {
-    await this.assertAccess(req.user.id, dto.conversationId);
-    const result = await this.chatService.createInChatBooking(
-      req.user.id,
-      dto,
-    );
-    this.chatGateway.publishMessage(result.message);
-    return result;
+  @ApiOperation({ summary: 'Retired. Place orders with POST /order-placement' })
+  createInChatBooking() {
+    throw new GoneException('Orders are placed from the Place Order panel.');
   }
 
   @Get('conversations/:conversationId/messages')

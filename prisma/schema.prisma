@@ -229,6 +229,7 @@ model ProviderProfile {
   activeChatSlots    ActiveChatSlot[]
   orders             Order[]
   orderOffers        OrderOffer[]
+  serviceAreas       ProviderServiceArea[]
   providerReviews    ProviderReview[]
   customerRetentions CustomerRetention[]
 }
@@ -843,4 +844,20 @@ model SupportMessage {
 
   @@index([threadId, createdAt])
   @@index([senderId])
+}
+
+/// An upazila where a provider takes orders. A new order is offered to the providers who cover its service
+/// upazila first, then to those who cover its district. A provider with no area is offered nothing.
+model ProviderServiceArea {
+  id         String   @id @default(uuid())
+  providerId String
+  districtId Int
+  upazilaId  Int
+  createdAt  DateTime @default(now())
+
+  provider ProviderProfile @relation(fields: [providerId], references: [id], onDelete: Cascade)
+
+  @@unique([providerId, upazilaId])
+  @@index([upazilaId])
+  @@index([districtId])
 }

@@ -11,6 +11,7 @@ import { RedisModule } from './redis/redis.module';
 import { ServiceModule } from './modules/services/services.module';
 import { ChatModule } from './modules/chat/chat.module';
 import { SupportChatModule } from './modules/support-chat/support-chat.module';
+import { ProviderServiceAreasModule } from './modules/provider-service-areas/provider-service-areas.module';
 import { UserAddressModule } from './modules/user-address/user-address.module';
 import { TechnicianProfileModule } from './modules/technician-profile/technician-profile.module';
 import { ProviderKycModule } from './modules/provider-kyc/provider-kyc.module';
@@ -45,6 +46,7 @@ import { LocationsModule } from './modules/locations/locations.module';
     ServiceModule,
     ChatModule,
     SupportChatModule,
+    ProviderServiceAreasModule,
     UserAddressModule,
     TechnicianProfileModule,
     ProviderKycModule,
