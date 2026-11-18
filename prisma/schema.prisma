@@ -165,6 +165,8 @@ model User {
   customerChatSessions  ChatSession[]      @relation("ChatSessionCustomer")
   counselorChatSessions ChatSession[]      @relation("ChatSessionCounselor")
   providerChatSessions  ChatSession[]      @relation("ChatSessionProvider")
+  supportThread         SupportThread?     @relation("SupportThreadMember")
+  sentSupportMessages   SupportMessage[]   @relation("SupportMessageSender")
 
   @@index([mobileNumber, name])
 }
@@ -812,4 +814,33 @@ model OrderOffer {
   @@unique([orderId, providerId])
   @@index([orderId, status])
   @@index([providerId, status])
+}
+
+/// The one direct chat between the platform staff (admin, manager, support) and a provider or a customer.
+/// Staff share it, so any of them continues the same history. Unlike ChatSession it needs no service or order.
+model SupportThread {
+  id               String           @id @default(uuid())
+  memberId         String           @unique
+  /// Messages the member wrote after this moment are unread for staff, and the other way round.
+  lastStaffReadAt  DateTime?
+  lastMemberReadAt DateTime?
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  member   User             @relation("SupportThreadMember", fields: [memberId], references: [id], onDelete: Cascade)
+  messages SupportMessage[]
+}
+
+model SupportMessage {
+  id        String   @id @default(uuid())
+  threadId  String
+  senderId  String
+  text      String   @db.Text
+  createdAt DateTime @default(now())
+
+  thread SupportThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  sender User          @relation("SupportMessageSender", fields: [senderId], references: [id], onDelete: Cascade)
+
+  @@index([threadId, createdAt])
+  @@index([senderId])
 }

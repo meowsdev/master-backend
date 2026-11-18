@@ -6,7 +6,7 @@ import {
 } from '@nestjs/common';
 import { SendMessageDto } from './dto/send-message.dto';
 import { MessageType, PaymentMode, Prisma, UserRole } from '@prisma/client';
-import { isOrderChatOpen } from './order-chat-policy';
+import { isOrderChatOpen, mustChatInsideAnOrder } from './order-chat-policy';
 import { assertNoPhoneNumber, canSeeContactDetails } from '../../common/contact-privacy';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ChatBookingService } from './chat-booking.service';
@@ -106,6 +106,10 @@ export class ChatService {
 
       if (!sender || sender.status !== 'ACTIVE') {
         throw new ForbiddenException('Sender is not allowed');
+      }
+
+      if (!dto.orderId && mustChatInsideAnOrder(sender.role)) {
+        throw new ForbiddenException('Open an order to chat. For anything else, use the Support chat.');
       }
 
       // Customers, providers and technicians cannot hand each other a phone number through the chat.

@@ -1,4 +1,12 @@
-import { OrderStatus, RevisionStatus } from '@prisma/client';
+import { OrderStatus, RevisionStatus, UserRole } from '@prisma/client';
+
+/**
+ * There is no "General Chat" any more: customers, providers and technicians only talk inside an order's
+ * tab. Anything else they need goes to the Support chat. Staff (counselors, admins) may still write to a
+ * conversation as a whole.
+ */
+const ROLES_BOUND_TO_AN_ORDER: UserRole[] = [UserRole.CUSTOMER, UserRole.PROVIDER, UserRole.TECHNICIAN];
+export const mustChatInsideAnOrder = (role: string) => ROLES_BOUND_TO_AN_ORDER.includes(role as UserRole);
 
 export interface OrderChatState {
   orderStatus: OrderStatus;

@@ -10,6 +10,7 @@ import { AuthModule } from './modules/auth/auth.module';
 import { RedisModule } from './redis/redis.module';
 import { ServiceModule } from './modules/services/services.module';
 import { ChatModule } from './modules/chat/chat.module';
+import { SupportChatModule } from './modules/support-chat/support-chat.module';
 import { UserAddressModule } from './modules/user-address/user-address.module';
 import { TechnicianProfileModule } from './modules/technician-profile/technician-profile.module';
 import { ProviderKycModule } from './modules/provider-kyc/provider-kyc.module';
@@ -43,6 +44,7 @@ import { LocationsModule } from './modules/locations/locations.module';
     AuthModule,
     ServiceModule,
     ChatModule,
+    SupportChatModule,
     UserAddressModule,
     TechnicianProfileModule,
     ProviderKycModule,

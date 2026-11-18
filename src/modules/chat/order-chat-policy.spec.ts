@@ -1,5 +1,5 @@
 import { OrderStatus, RevisionStatus } from '@prisma/client';
-import { isOrderChatOpen } from './order-chat-policy';
+import { isOrderChatOpen, mustChatInsideAnOrder } from './order-chat-policy';
 
 const order = (orderStatus: OrderStatus, ...revisions: RevisionStatus[]) => ({
   orderStatus,
@@ -26,5 +26,18 @@ describe('isOrderChatOpen', () => {
 
   it('is closed for cancelled orders', () => {
     expect(isOrderChatOpen(order(OrderStatus.CANCELLED))).toBe(false);
+  });
+});
+
+describe('mustChatInsideAnOrder', () => {
+  it('binds customers, providers and technicians to an order tab', () => {
+    expect(mustChatInsideAnOrder('CUSTOMER')).toBe(true);
+    expect(mustChatInsideAnOrder('PROVIDER')).toBe(true);
+    expect(mustChatInsideAnOrder('TECHNICIAN')).toBe(true);
+  });
+
+  it('leaves staff free to write to a conversation', () => {
+    expect(mustChatInsideAnOrder('COUNSELOR')).toBe(false);
+    expect(mustChatInsideAnOrder('ADMIN')).toBe(false);
   });
 });
