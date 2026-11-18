@@ -9,6 +9,8 @@ import { getFrontendOrigins } from './modules/auth/auth.config';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { RedisIoAdapter } from './redis/redis-io.adapter';
 
+import { getOtpConfig } from './modules/auth/otp.config';
+
 async function bootstrap() {
   const logger = new Logger('Bootstrap');
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
@@ -26,6 +28,12 @@ async function bootstrap() {
     origin: frontendOrigins.length > 0 ? frontendOrigins : true,
     credentials: true,
   });
+
+  // Test-phase switch: with no SMS provider yet, testers read the OTP on the login panel.
+  // Shout at every boot so it cannot be forgotten once a real SMS gateway exists.
+  if (getOtpConfig().exposeCode) {
+    logger.warn('OTP_EXPOSE_CODE=true: login codes are returned to the browser. TEST MODE ONLY - turn off before real launch.');
+  }
 
   app.enableShutdownHooks();
   app.setGlobalPrefix('api/v1');
