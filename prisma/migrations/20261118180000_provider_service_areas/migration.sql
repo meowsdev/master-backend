@@ -1,3 +1,9 @@
+-- User.districtId / upazilaId existed in schema.prisma but in no migration (they were created with
+-- `db push` locally), so a database built only from migrations lacks them. IF NOT EXISTS keeps
+-- this safe for databases that already have the columns.
+ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "districtId" INTEGER;
+ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "upazilaId" INTEGER;
+
 CREATE TABLE "ProviderServiceArea" (
     "id" TEXT NOT NULL,
     "providerId" TEXT NOT NULL,
