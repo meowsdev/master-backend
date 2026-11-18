@@ -1,5 +1,5 @@
 import { BadRequestException } from '@nestjs/common';
-import { assertNoPhoneNumber, canSeeContactDetails, containsPhoneNumber, stripContactDetails } from './contact-privacy';
+import { assertNoPhoneNumber, canSeeContactDetails, containsPhoneNumber, maskPhoneNumber, stripContactDetails } from './contact-privacy';
 
 describe('stripContactDetails', () => {
   const order = {
@@ -63,5 +63,23 @@ describe('containsPhoneNumber', () => {
   it('assertNoPhoneNumber throws a clear error', () => {
     expect(() => assertNoPhoneNumber('my number 01711111111')).toThrow(BadRequestException);
     expect(() => assertNoPhoneNumber(undefined)).not.toThrow();
+  });
+});
+
+describe('masked phone for users without a username', () => {
+  it('keeps the start and the last four digits and hides five in between', () => {
+    expect(maskPhoneNumber('+8801712345678')).toBe('+8801*****5678');
+  });
+
+  it('adds maskedPhone only when the user has no username', () => {
+    const [noHandle, withHandle] = stripContactDetails(
+      [
+        { id: 'c1', username: null, mobileNumber: '+8801712345678' },
+        { id: 'c2', username: 'rafi', mobileNumber: '+8801812345678' },
+      ],
+      'provider',
+    );
+    expect(noHandle).toEqual({ id: 'c1', username: null, maskedPhone: '+8801*****5678' });
+    expect(withHandle).toEqual({ id: 'c2', username: 'rafi' });
   });
 });

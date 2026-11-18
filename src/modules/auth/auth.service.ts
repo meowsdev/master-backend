@@ -87,6 +87,16 @@ export class AuthService {
       select: USER_SELECT,
     });
 
+    // Profile fields are optional, so a customer who only verified a number still needs the
+    // profile row that orders hang off.
+    if (user.role === UserRole.CUSTOMER) {
+      await this.prisma.customerProfile.upsert({
+        where: { userId: user.id },
+        update: {},
+        create: { userId: user.id },
+      });
+    }
+
     const tokens = await this.sessions.createSession(user, ctx);
     return {
       user,

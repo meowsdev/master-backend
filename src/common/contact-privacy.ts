@@ -5,6 +5,17 @@ import { UserRole } from '@prisma/client';
 const STAFF_ROLES: string[] = [UserRole.ADMIN, UserRole.MANAGER, UserRole.SUPPORT, UserRole.HR, UserRole.COUNSELOR];
 export const canSeeContactDetails = (role?: string | null) => Boolean(role && STAFF_ROLES.includes(role));
 
+/**
+ * "+8801712345678" -> "+8801*****5678": the last four digits stay, five before them become stars and
+ * the start stays. Lets a provider tell customers apart who never set a username, without the number.
+ */
+export function maskPhoneNumber(phone: string): string {
+  const lastFour = phone.slice(-4);
+  const rest = phone.slice(0, -4);
+  const starCount = Math.min(5, rest.length);
+  return `${rest.slice(0, rest.length - starCount)}${'*'.repeat(starCount)}${lastFour}`;
+}
+
 const HIDDEN_KEYS = ['mobileNumber', 'email'] as const;
 
 const isPlainObject = (value: unknown): value is Record<string, unknown> =>
@@ -21,6 +32,10 @@ export function stripContactDetails<T>(value: T, viewerId: string | null): T {
 
   const isViewersOwn = viewerId !== null && value.id === viewerId;
   const cleaned: Record<string, unknown> = {};
+  // A user without a username is shown by a masked number instead.
+  if (!isViewersOwn && typeof value.mobileNumber === 'string' && 'username' in value && !value.username) {
+    cleaned.maskedPhone = maskPhoneNumber(value.mobileNumber);
+  }
   for (const [key, child] of Object.entries(value)) {
     if (!isViewersOwn && (HIDDEN_KEYS as readonly string[]).includes(key)) continue;
     cleaned[key] = stripContactDetails(child, viewerId);
