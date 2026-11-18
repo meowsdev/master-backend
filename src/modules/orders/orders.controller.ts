@@ -59,15 +59,15 @@ export class OrdersController {
   @Get('provider/:providerId')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Get orders by provider profile' })
-  findByProvider(@Param('providerId', new ParseUUIDPipe()) providerId: string) {
-    return this.ordersService.findByProvider(providerId);
+  findByProvider(@Param('providerId', new ParseUUIDPipe()) providerId: string, @Req() req: AuthenticatedRequest) {
+    return this.ordersService.findByProviderForUser(providerId, req.user);
   }
 
   @Get('customer/:customerId')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Get orders by customer profile' })
-  findByCustomer(@Param('customerId', new ParseUUIDPipe()) customerId: string) {
-    return this.ordersService.findByCustomer(customerId);
+  findByCustomer(@Param('customerId', new ParseUUIDPipe()) customerId: string, @Req() req: AuthenticatedRequest) {
+    return this.ordersService.findByCustomerForUser(customerId, req.user);
   }
 
   @Get(':id')

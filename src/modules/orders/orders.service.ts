@@ -26,6 +26,9 @@ import {
   assertTechnician,
 } from './orders.helpers';
 
+/** Platform staff who may read any order. */
+const isOrderStaff = (role: UserRole) => role === UserRole.ADMIN || role === UserRole.MANAGER || role === UserRole.SUPPORT;
+
 @Injectable()
 export class OrdersService {
   constructor(
@@ -205,6 +208,24 @@ export class OrdersService {
       needsAttention: order.orderStatus === OrderStatus.PENDING && offers.length === 0,
       offerCount: _count.offers,
     }));
+  }
+
+  /** A provider reads only their own orders; staff read anyone's. Customers, technicians and other providers are turned away. */
+  async findByProviderForUser(providerId: string, user: { id: string; role: UserRole }) {
+    if (!isOrderStaff(user.role)) {
+      const own = user.role === UserRole.PROVIDER ? await this.prisma.providerProfile.findUnique({ where: { userId: user.id }, select: { id: true } }) : null;
+      if (own?.id !== providerId) throw new ForbiddenException('You can only see your own orders');
+    }
+    return this.findByProvider(providerId);
+  }
+
+  /** A customer reads only their own orders; staff read anyone's. */
+  async findByCustomerForUser(customerId: string, user: { id: string; role: UserRole }) {
+    if (!isOrderStaff(user.role)) {
+      const own = user.role === UserRole.CUSTOMER ? await this.prisma.customerProfile.findUnique({ where: { userId: user.id }, select: { id: true } }) : null;
+      if (own?.id !== customerId) throw new ForbiddenException('You can only see your own orders');
+    }
+    return this.findByCustomer(customerId);
   }
 
   findByProvider(providerId: string) {

@@ -126,11 +126,11 @@ export class OrderAssignmentService {
     });
   }
 
-  /** The order becomes this provider's, accepted, and every other open offer is withdrawn. */
+  /** The order becomes this provider's and the work starts, exactly as when they accept it themselves; every other open offer is withdrawn. */
   private async giveToOne(tx: Prisma.TransactionClient, orderId: string, providerId: string) {
     await tx.order.update({
       where: { id: orderId },
-      data: { providerId, orderStatus: OrderStatus.ACCEPTED, ...acceptanceStamp(OrderStatus.PENDING, OrderStatus.ACCEPTED) },
+      data: { providerId, orderStatus: OrderStatus.IN_PROGRESS, ...acceptanceStamp(OrderStatus.PENDING, OrderStatus.IN_PROGRESS) },
     });
     await this.dispatch.closeOffersAfterAcceptance(tx, orderId, providerId);
   }

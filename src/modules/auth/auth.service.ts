@@ -17,6 +17,7 @@ import { UserRole } from '@prisma/client';
 import { SessionContext, SessionsService } from './sessions.service';
 import { LocationsService } from '../locations/locations.service';
 import { SELF_SERVICE_SIGNUP_ROLES } from './role-policy';
+import { phoneLookupVariants } from '../../common/phone';
 
 const USERNAME_PATTERN = /^[a-z0-9_]{3,20}$/;
 
@@ -71,21 +72,12 @@ export class AuthService {
   async verifyOtp(data: VerifyOtpDto, ctx: SessionContext = {}) {
     await this.otp.verify(data.phoneNumber, data.code);
 
-    const user = await this.prisma.user.upsert({
-      where: {
-        mobileNumber: data.phoneNumber,
-      },
-      update: {
-        isVerified: true,
-        status: 'ACTIVE',
-      },
-      create: {
-        mobileNumber: data.phoneNumber,
-        isVerified: true,
-        status: 'ACTIVE',
-      },
-      select: USER_SELECT,
-    });
+    // An existing account is found however its number was written (+880..., 880..., 01...). Otherwise a second,
+    // empty customer account would be made next to the real one, and the person would land in the wrong role.
+    const existingId = await this.findUserIdByPhone(data.phoneNumber);
+    const user = existingId
+      ? await this.prisma.user.update({ where: { id: existingId }, data: { isVerified: true, status: 'ACTIVE' }, select: USER_SELECT })
+      : await this.prisma.user.create({ data: { mobileNumber: data.phoneNumber, isVerified: true, status: 'ACTIVE' }, select: USER_SELECT });
 
     // Profile fields are optional, so a customer who only verified a number still needs the
     // profile row that orders hang off.
@@ -104,6 +96,15 @@ export class AuthService {
     };
   }
 
+  /** The account for a phone number, matching the exact stored form first and the other known forms after it. */
+  private async findUserIdByPhone(phone: string): Promise<string | null> {
+    const matches = await this.prisma.user.findMany({
+      where: { mobileNumber: { in: phoneLookupVariants(phone) } },
+      select: { id: true, mobileNumber: true },
+    });
+    return (matches.find((match) => match.mobileNumber === phone) ?? matches[0])?.id ?? null;
+  }
+
   async technicianLogin(data: TechnicianLoginDto, ctx: SessionContext = {}) {
     const validPassword = process.env.TECHNICIAN_DEFAULT_PASSWORD || '123456';
 
@@ -111,14 +112,10 @@ export class AuthService {
       throw new UnauthorizedException('Invalid phone number or password');
     }
 
-    let user = await this.prisma.user.findUnique({
-      where: {
-        mobileNumber: data.phoneNumber,
-      },
-      include: {
-        technicianProfile: true,
-      },
-    });
+    const existingId = await this.findUserIdByPhone(data.phoneNumber);
+    let user = existingId
+      ? await this.prisma.user.findUnique({ where: { id: existingId }, include: { technicianProfile: true } })
+      : null;
 
     if (!user) {
       throw new UnauthorizedException(

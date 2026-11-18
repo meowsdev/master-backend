@@ -37,10 +37,10 @@ describe('OrderAssignmentService.assign', () => {
     expect(tx.orderAssignmentLog.create).toHaveBeenCalledWith({ data: { orderId: 'o1', actorId: 'admin-1', providerId: 'p1', mode: 'OFFER' } });
   });
 
-  it('ASSIGN: the order becomes theirs, accepted, and the other offers are closed', async () => {
+  it('ASSIGN: the order becomes theirs and the work starts, and the other offers are closed', async () => {
     const { service, tx, dispatch, events } = build();
     await service.assign(admin, 'o1', 'p1', 'ASSIGN');
-    expect(tx.order.update).toHaveBeenCalledWith({ where: { id: 'o1' }, data: expect.objectContaining({ providerId: 'p1', orderStatus: 'ACCEPTED', acceptedAt: expect.any(Date) }) });
+    expect(tx.order.update).toHaveBeenCalledWith({ where: { id: 'o1' }, data: expect.objectContaining({ providerId: 'p1', orderStatus: 'IN_PROGRESS', acceptedAt: expect.any(Date) }) });
     expect(dispatch.closeOffersAfterAcceptance).toHaveBeenCalledWith(tx, 'o1', 'p1');
     expect(events.publishToUser).toHaveBeenCalledWith('provider-user', 'orderAssigned', expect.any(Object));
   });
