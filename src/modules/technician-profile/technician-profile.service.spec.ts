@@ -46,3 +46,35 @@ describe('TechnicianProfileService.createByAdmin', () => {
     await expect(service.createByAdmin(dto)).rejects.toThrow(/Provider agency not found/);
   });
 });
+
+describe('TechnicianProfileService.assignAgency', () => {
+  function buildAssign(options: { currentAgency: string | null; activeJobs: number }) {
+    const prisma = {
+      technicianProfile: {
+        findUnique: jest.fn().mockResolvedValue({ id: 't1', providerAgencyId: options.currentAgency }),
+        update: jest.fn().mockResolvedValue({ id: 't1' }),
+      },
+      providerProfile: { findUnique: jest.fn().mockResolvedValue({ id: 'agency-2' }) },
+      order: { count: jest.fn().mockResolvedValue(options.activeJobs) },
+    };
+    return { service: new TechnicianProfileService(prisma as never), prisma };
+  }
+
+  it('moves a technician who has no job running', async () => {
+    const { service, prisma } = buildAssign({ currentAgency: 'agency-1', activeJobs: 0 });
+    await service.assignAgency('t1', 'agency-2');
+    expect(prisma.technicianProfile.update).toHaveBeenCalledWith(expect.objectContaining({ data: { providerAgencyId: 'agency-2' } }));
+  });
+
+  it('refuses to move a technician in the middle of a job', async () => {
+    const { service, prisma } = buildAssign({ currentAgency: 'agency-1', activeJobs: 2 });
+    await expect(service.assignAgency('t1', 'agency-2')).rejects.toBeInstanceOf(ConflictException);
+    expect(prisma.technicianProfile.update).not.toHaveBeenCalled();
+  });
+
+  it('does not count jobs when the provider stays the same', async () => {
+    const { service, prisma } = buildAssign({ currentAgency: 'agency-2', activeJobs: 5 });
+    await service.assignAgency('t1', 'agency-2');
+    expect(prisma.order.count).not.toHaveBeenCalled();
+  });
+});

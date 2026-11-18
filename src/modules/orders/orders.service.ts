@@ -65,6 +65,10 @@ export class OrdersService {
       throw new BadRequestException('Customer profile is required to place an order');
     }
     await assertCustomer(this.prisma, customerId);
+    const customerAccount = await this.prisma.customerProfile.findUnique({ where: { id: customerId }, select: { user: { select: { isRestricted: true } } } });
+    if (customerAccount?.user.isRestricted) {
+      throw new ForbiddenException('This account is restricted from placing new orders. Please contact support.');
+    }
 
     // 2. Matching. Without a named provider the order is offered to a group of eligible providers at once
     // (see OrderDispatchService); the first to accept gets it. A provider with no matching skill is never asked.

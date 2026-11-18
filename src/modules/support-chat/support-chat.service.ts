@@ -8,9 +8,10 @@ const STAFF_ROLES: UserRole[] = [UserRole.ADMIN, UserRole.MANAGER, UserRole.SUPP
 /** The people staff can write to. */
 const MEMBER_ROLES: UserRole[] = [UserRole.PROVIDER, UserRole.TECHNICIAN, UserRole.CUSTOMER];
 
-/** The admin's "providers" list also holds the technicians, who work for providers. */
-const ROLES_BY_DIRECTORY: Record<'PROVIDER' | 'CUSTOMER', UserRole[]> = {
-  PROVIDER: [UserRole.PROVIDER, UserRole.TECHNICIAN],
+/** The admin has one list per kind of person. */
+const ROLES_BY_DIRECTORY: Record<'PROVIDER' | 'TECHNICIAN' | 'CUSTOMER', UserRole[]> = {
+  PROVIDER: [UserRole.PROVIDER],
+  TECHNICIAN: [UserRole.TECHNICIAN],
   CUSTOMER: [UserRole.CUSTOMER],
 };
 
@@ -27,14 +28,13 @@ export class SupportChatService {
   constructor(private readonly prisma: PrismaService) {}
 
   /** Staff list of every provider or customer, each with the latest message and how many they have not read. */
-  async listDirectory(viewer: Viewer, role: 'PROVIDER' | 'CUSTOMER', search?: string) {
+  async listDirectory(viewer: Viewer, role: 'PROVIDER' | 'TECHNICIAN' | 'CUSTOMER', search?: string) {
     this.assertStaff(viewer);
     const term = search?.trim();
 
     const members = await this.prisma.user.findMany({
       where: {
         role: { in: ROLES_BY_DIRECTORY[role] },
-        status: 'ACTIVE',
         ...(term
           ? {
               OR: [
@@ -52,6 +52,8 @@ export class SupportChatService {
         mobileNumber: true,
         profilePhoto: true,
         role: true,
+        status: true,
+        isRestricted: true,
         supportThread: {
           select: {
             id: true,
@@ -61,7 +63,7 @@ export class SupportChatService {
         },
       },
       orderBy: { createdAt: 'desc' },
-      take: 200,
+      take: 1000,
     });
 
     const rows = await Promise.all(

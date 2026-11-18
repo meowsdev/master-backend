@@ -5,6 +5,7 @@ import {
   IsArray,
   IsInt,
   IsOptional,
+  IsPhoneNumber,
   IsString,
   IsUUID,
   Matches,
@@ -86,4 +87,17 @@ export class PlaceOrderDto extends QuoteOrderDto {
   @ArrayMaxSize(5)
   @IsString({ each: true })
   imageUrls?: string[];
+}
+
+/** An order an admin places for a customer who did not order through the app. */
+export class AdminPlaceOrderDto extends PlaceOrderDto {
+  @ApiProperty({ example: '+8801712345678', description: 'The customer; created as a customer account if the number is new' })
+  @IsPhoneNumber()
+  customerPhone!: string;
+
+  @ApiPropertyOptional({ maxLength: 100 })
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  customerName?: string;
 }

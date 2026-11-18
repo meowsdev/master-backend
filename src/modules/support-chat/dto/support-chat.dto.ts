@@ -13,8 +13,8 @@ export class SendSupportMessageDto {
 }
 
 export class SupportDirectoryQueryDto {
-  @IsIn(['PROVIDER', 'CUSTOMER'])
-  role!: 'PROVIDER' | 'CUSTOMER';
+  @IsIn(['PROVIDER', 'TECHNICIAN', 'CUSTOMER'])
+  role!: 'PROVIDER' | 'TECHNICIAN' | 'CUSTOMER';
 
   @IsOptional()
   @IsString()

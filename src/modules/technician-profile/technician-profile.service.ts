@@ -4,7 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { UserRole } from '@prisma/client';
+import { OrderStatus, UserRole } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   AdminCreateTechnicianDto,
@@ -82,8 +82,17 @@ export class TechnicianProfileService {
   }
 
   async assignAgency(profileId: string, providerAgencyId: string | null) {
-    await this.assertExists(profileId);
+    const current = await this.prisma.technicianProfile.findUnique({ where: { id: profileId }, select: { id: true, providerAgencyId: true } });
+    if (!current) throw new NotFoundException('Technician profile not found');
     if (providerAgencyId) await this.assertProviderAgency(providerAgencyId);
+
+    // Moving a technician in the middle of a job would leave that job with a technician from another provider.
+    if (current.providerAgencyId !== providerAgencyId) {
+      const activeJobs = await this.prisma.order.count({ where: { technicianId: profileId, orderStatus: { in: [OrderStatus.ACCEPTED, OrderStatus.IN_PROGRESS] } } });
+      if (activeJobs > 0) {
+        throw new ConflictException(`This technician has ${activeJobs} active job(s). Move them after the jobs are finished.`);
+      }
+    }
 
     return this.prisma.technicianProfile.update({
       where: { id: profileId },

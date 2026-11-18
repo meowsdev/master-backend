@@ -4,7 +4,7 @@ import { Prisma, PriceUnit, UserRole } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { LocationsService } from '../locations/locations.service';
 import { OrdersService } from '../orders/orders.service';
-import { PlaceOrderDto, QuoteOrderDto } from './dto/place-order.dto';
+import { AdminPlaceOrderDto, PlaceOrderDto, QuoteOrderDto } from './dto/place-order.dto';
 import { calculateQuote, PricedAnswer } from './order-pricing';
 import { assertValidSchedule, TIME_SLOTS } from './order-schedule';
 
@@ -78,6 +78,29 @@ export class OrderPlacementService {
   async quote(dto: QuoteOrderDto) {
     const { quote } = await this.priceSelection(dto);
     return quote;
+  }
+
+  /**
+   * An admin books on behalf of a customer. The number is the customer's identity: an existing customer is
+   * reused, a new number becomes a customer account (no name needed; they can sign in later with OTP). The
+   * order then goes through exactly the same pricing, area matching and dispatch as one placed in the app.
+   */
+  async placeOrderForCustomer(dto: AdminPlaceOrderDto) {
+    const { customerPhone, customerName, ...order } = dto;
+
+    let customer = await this.prisma.user.findUnique({ where: { mobileNumber: customerPhone }, select: { id: true, role: true, status: true } });
+    if (customer && customer.role !== UserRole.CUSTOMER) {
+      throw new BadRequestException(`This number belongs to a ${customer.role.toLowerCase()}, not a customer`);
+    }
+    if (customer && customer.status !== 'ACTIVE') {
+      throw new BadRequestException('This customer is blocked or banned and cannot be ordered for');
+    }
+    customer ??= await this.prisma.user.create({
+      data: { mobileNumber: customerPhone, name: customerName?.trim() || null, role: UserRole.CUSTOMER, status: 'ACTIVE' },
+      select: { id: true, role: true, status: true },
+    });
+
+    return this.placeOrder(order, { id: customer.id, role: UserRole.CUSTOMER });
   }
 
   async placeOrder(dto: PlaceOrderDto, user: { id: string; role: UserRole }) {

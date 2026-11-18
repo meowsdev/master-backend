@@ -21,7 +21,10 @@ enum UserRole {
 enum UserStatus {
   ACTIVE
   INACTIVE
+  /// Blocked by staff for now; can be unblocked.
   SUSPENDED
+  /// Banned by an admin; only an admin can lift it.
+  BANNED
 }
 
 enum Gender {
@@ -148,6 +151,8 @@ model User {
   role         UserRole   @default(CUSTOMER)
   status       UserStatus @default(INACTIVE)
   isVerified   Boolean    @default(false)
+  /// Set by staff: a restricted provider gets no new orders, a restricted customer cannot place any.
+  isRestricted Boolean    @default(false)
   createdAt    DateTime   @default(now())
   updatedAt    DateTime   @updatedAt
 
@@ -167,6 +172,8 @@ model User {
   providerChatSessions  ChatSession[]      @relation("ChatSessionProvider")
   supportThread         SupportThread?     @relation("SupportThreadMember")
   sentSupportMessages   SupportMessage[]   @relation("SupportMessageSender")
+  moderationLog         UserModerationLog[] @relation("ModeratedUser")
+  moderationsDone       UserModerationLog[] @relation("ModerationActor")
 
   @@index([mobileNumber, name])
 }
@@ -860,4 +867,19 @@ model ProviderServiceArea {
   @@unique([providerId, upazilaId])
   @@index([upazilaId])
   @@index([districtId])
+}
+
+/// Who restricted, blocked or banned whom, when and why. Never edited, only appended.
+model UserModerationLog {
+  id        String   @id @default(uuid())
+  userId    String
+  actorId   String
+  action    String   @db.VarChar(20)
+  reason    String?  @db.VarChar(300)
+  createdAt DateTime @default(now())
+
+  user  User @relation("ModeratedUser", fields: [userId], references: [id], onDelete: Cascade)
+  actor User @relation("ModerationActor", fields: [actorId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
 }

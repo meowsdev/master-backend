@@ -59,6 +59,7 @@ export class OrderDispatchService {
         user: {
           role: UserRole.PROVIDER,
           status: 'ACTIVE',
+          isRestricted: false,
           ...(order.customerUserId ? { id: { not: order.customerUserId } } : {}),
           serviceAssignments: { some: { serviceId: order.serviceId, isActive: true } },
         },
