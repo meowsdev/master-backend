@@ -123,8 +123,12 @@ export class OrdersService {
     });
   }
 
-  async findAllForUser(user: { id: string; role: UserRole }, activeRole?: UserRole) {
-    const effectiveRole = activeRole || user.role;
+  /**
+   * The role comes from the signed-in account only. A number has exactly one role, so the old `x-active-role`
+   * header added nothing but a hole: anyone could send PROVIDER and have a provider profile made for them.
+   */
+  async findAllForUser(user: { id: string; role: UserRole }) {
+    const effectiveRole = user.role;
 
     if (effectiveRole === UserRole.PROVIDER) {
       let provider = await this.prisma.providerProfile.findUnique({
@@ -180,7 +184,27 @@ export class OrdersService {
     }
 
     // Platform Staff (ADMIN, MANAGER, SUPPORT, HR) can oversee all orders
-    return this.findAll();
+    return this.findAllForStaff();
+  }
+
+  /**
+   * Every order for staff, and which pending ones need a person: nobody holds a live offer for them (everyone
+   * asked said no or let it expire), so they would sit there for ever without an admin sending them on.
+   */
+  async findAllForStaff() {
+    const orders = await this.prisma.order.findMany({
+      orderBy: { createdAt: 'desc' },
+      include: {
+        ...ORDER_RELATIONS_INCLUDE,
+        offers: { where: { status: 'OFFERED', expiresAt: { gt: new Date() } }, select: { id: true }, take: 1 },
+        _count: { select: { offers: true } },
+      },
+    });
+    return orders.map(({ offers, _count, ...order }) => ({
+      ...order,
+      needsAttention: order.orderStatus === OrderStatus.PENDING && offers.length === 0,
+      offerCount: _count.offers,
+    }));
   }
 
   findByProvider(providerId: string) {

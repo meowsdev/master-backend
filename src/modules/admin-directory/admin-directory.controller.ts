@@ -20,6 +20,8 @@ export class AdminDirectoryController {
   @ApiOperation({ summary: 'ADMIN: list providers with level, rating, wallet and KYC status' })
   async providers() {
     const providers = await this.prisma.providerProfile.findMany({
+      // Only accounts that really are providers: other roles can own a stray profile row, which must not be listed or chosen.
+      where: { user: { role: UserRole.PROVIDER } },
       orderBy: { createdAt: 'desc' },
       select: {
         id: true,

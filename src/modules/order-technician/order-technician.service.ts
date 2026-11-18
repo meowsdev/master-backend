@@ -1,0 +1,82 @@
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { OrderStatus, UserRole, UserStatus } from '@prisma/client';
+import { PrismaService } from '../../prisma/prisma.service';
+
+/** A technician can only be put on an order that a provider has taken and that is not finished. */
+const WORKABLE_STATUSES: OrderStatus[] = [OrderStatus.ACCEPTED, OrderStatus.IN_PROGRESS];
+
+interface Actor {
+  id: string;
+  role: UserRole;
+}
+
+/**
+ * Which technician works on an order. The provider who owns the order chooses among THEIR OWN technicians
+ * (those whose provider agency is this provider); an admin may do the same for any order. A technician of
+ * another provider can never be put on someone else's order, whoever asks.
+ */
+@Injectable()
+export class OrderTechnicianService {
+  constructor(private readonly prisma: PrismaService) {}
+
+  /** The technicians that can be chosen for this order, with how many jobs each already has running. */
+  async listForOrder(actor: Actor, orderId: string) {
+    const order = await this.loadAuthorizedOrder(actor, orderId);
+    const technicians = await this.prisma.technicianProfile.findMany({
+      where: { providerAgencyId: order.providerId },
+      orderBy: { createdAt: 'asc' },
+      select: {
+        id: true,
+        user: { select: { name: true, username: true, profilePhoto: true, status: true } },
+        _count: { select: { orders: { where: { orderStatus: { in: WORKABLE_STATUSES } } } } },
+      },
+    });
+
+    return {
+      currentTechnicianId: order.technicianId,
+      technicians: technicians.map(({ user, _count, ...technician }) => ({
+        ...technician,
+        name: user.name,
+        username: user.username,
+        profilePhoto: user.profilePhoto,
+        // A blocked or banned technician cannot take work, so the screen greys them out.
+        isActive: user.status === UserStatus.ACTIVE,
+        activeJobs: _count.orders,
+      })),
+    };
+  }
+
+  async setTechnician(actor: Actor, orderId: string, technicianId: string | null) {
+    const order = await this.loadAuthorizedOrder(actor, orderId);
+    if (!WORKABLE_STATUSES.includes(order.orderStatus)) {
+      throw new ConflictException('A technician can only be assigned while the order is accepted or in progress');
+    }
+
+    if (technicianId !== null) {
+      const technician = await this.prisma.technicianProfile.findUnique({
+        where: { id: technicianId },
+        select: { id: true, providerAgencyId: true, user: { select: { status: true } } },
+      });
+      if (!technician) throw new NotFoundException('Technician not found');
+      if (technician.providerAgencyId !== order.providerId) throw new BadRequestException('This technician does not work for the provider of this order');
+      if (technician.user.status !== UserStatus.ACTIVE) throw new BadRequestException('This technician is blocked and cannot take work');
+    }
+
+    await this.prisma.order.update({ where: { id: orderId }, data: { technicianId } });
+    return { orderId, technicianId };
+  }
+
+  /** The order must exist and the actor must be its provider (or an admin). Everyone else is turned away. */
+  private async loadAuthorizedOrder(actor: Actor, orderId: string) {
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      select: { id: true, providerId: true, technicianId: true, orderStatus: true, provider: { select: { userId: true } } },
+    });
+    if (!order) throw new NotFoundException('Order not found');
+
+    const isAdmin = actor.role === UserRole.ADMIN;
+    const isOwnerProvider = actor.role === UserRole.PROVIDER && order.provider.userId === actor.id;
+    if (!isAdmin && !isOwnerProvider) throw new ForbiddenException('Only the provider of this order can choose its technician');
+    return order;
+  }
+}

@@ -152,9 +152,9 @@ export class TechnicianProfileService {
 
     const provider = await this.prisma.providerProfile.findUnique({
       where: { id: providerAgencyId },
-      select: { id: true },
+      select: { id: true, user: { select: { role: true } } },
     });
 
-    if (!provider) throw new BadRequestException('Provider agency not found');
+    if (!provider || provider.user.role !== UserRole.PROVIDER) throw new BadRequestException('Provider agency not found');
   }
 }

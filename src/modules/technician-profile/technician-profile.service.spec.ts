@@ -9,7 +9,7 @@ function build(existingUser: unknown, agencyExists = true) {
     technicianProfile: { create: jest.fn().mockResolvedValue({ id: 'profile-1' }) },
   };
   const prisma = {
-    providerProfile: { findUnique: jest.fn().mockResolvedValue(agencyExists ? { id: 'agency-1' } : null) },
+    providerProfile: { findUnique: jest.fn().mockResolvedValue(agencyExists ? { id: 'agency-1', user: { role: UserRole.PROVIDER } } : null) },
     user: { findUnique: jest.fn().mockResolvedValue(existingUser) },
     $transaction: jest.fn((run) => run(tx)),
   };
@@ -54,7 +54,7 @@ describe('TechnicianProfileService.assignAgency', () => {
         findUnique: jest.fn().mockResolvedValue({ id: 't1', providerAgencyId: options.currentAgency }),
         update: jest.fn().mockResolvedValue({ id: 't1' }),
       },
-      providerProfile: { findUnique: jest.fn().mockResolvedValue({ id: 'agency-2' }) },
+      providerProfile: { findUnique: jest.fn().mockResolvedValue({ id: 'agency-2', user: { role: UserRole.PROVIDER } }) },
       order: { count: jest.fn().mockResolvedValue(options.activeJobs) },
     };
     return { service: new TechnicianProfileService(prisma as never), prisma };
@@ -76,5 +76,18 @@ describe('TechnicianProfileService.assignAgency', () => {
     const { service, prisma } = buildAssign({ currentAgency: 'agency-2', activeJobs: 5 });
     await service.assignAgency('t1', 'agency-2');
     expect(prisma.order.count).not.toHaveBeenCalled();
+  });
+});
+
+describe('TechnicianProfileService provider check', () => {
+  it('only puts a technician under a real provider, not a stray profile of another role', async () => {
+    const prisma = {
+      technicianProfile: { findUnique: jest.fn().mockResolvedValue({ id: 't1', providerAgencyId: null }), update: jest.fn() },
+      providerProfile: { findUnique: jest.fn().mockResolvedValue({ id: 'agency-9', user: { role: UserRole.CUSTOMER } }) },
+      order: { count: jest.fn().mockResolvedValue(0) },
+    };
+    const service = new TechnicianProfileService(prisma as never);
+    await expect(service.assignAgency('t1', 'agency-9')).rejects.toThrow('Provider agency not found');
+    expect(prisma.technicianProfile.update).not.toHaveBeenCalled();
   });
 });

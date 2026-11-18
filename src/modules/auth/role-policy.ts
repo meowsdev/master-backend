@@ -18,8 +18,9 @@ export const SELF_SERVICE_SIGNUP_ROLES: readonly UserRole[] = [
 ];
 
 /**
- * Only these roles may create a technician, attach one to a provider, or assign
- * one to an order. Providers, counselors, customers and technicians themselves may not.
+ * Only these roles may create a technician, attach one to a provider, or put one on an order through the
+ * general order update. Choosing which of a provider's OWN technicians works on an order is a separate,
+ * narrower right of that order's provider and of an admin (`modules/order-technician`).
  */
 export const TECHNICIAN_MANAGER_ROLES: readonly UserRole[] = [UserRole.ADMIN];
 

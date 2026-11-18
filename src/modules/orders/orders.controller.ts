@@ -52,9 +52,8 @@ export class OrdersController {
   @Get()
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Get orders filtered by user role' })
-  findAll(@Req() req: AuthenticatedRequest & { headers: Record<string, string | undefined> }) {
-    const activeRole = req.headers['x-active-role'] as UserRole | undefined;
-    return this.ordersService.findAllForUser(req.user, activeRole);
+  findAll(@Req() req: AuthenticatedRequest) {
+    return this.ordersService.findAllForUser(req.user);
   }
 
   @Get('provider/:providerId')
