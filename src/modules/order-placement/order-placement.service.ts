@@ -1,5 +1,5 @@
 import { assertNoPhoneNumber } from '../../common/contact-privacy';
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Prisma, PriceUnit, UserRole } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { LocationsService } from '../locations/locations.service';
@@ -20,6 +20,8 @@ const MAX_QUANTITY: Record<PriceUnit, number> = {
 
 @Injectable()
 export class OrderPlacementService {
+  private readonly logger = new Logger(OrderPlacementService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly orders: OrdersService,
@@ -163,7 +165,27 @@ export class OrderPlacementService {
       throw error;
     }
 
+    await this.rememberAddress(user.id, dto);
     return { order, quote };
+  }
+
+  /**
+   * Keeps the place of the latest order on the customer's profile (district, upazila and the default saved
+   * address), so the next Place Order form starts filled in. The order is already placed, so a failure
+   * here is only logged: the customer just types the address again next time.
+   */
+  private async rememberAddress(userId: string, dto: PlaceOrderDto) {
+    const addressText = dto.addressDetail.trim();
+    try {
+      await this.prisma.$transaction(async (tx) => {
+        await tx.user.update({ where: { id: userId }, data: { districtId: dto.districtId, upazilaId: dto.upazilaId } });
+        const saved = await tx.userAddress.findFirst({ where: { userId, isDefault: true }, select: { id: true } });
+        if (saved) await tx.userAddress.update({ where: { id: saved.id }, data: { addressText } });
+        else await tx.userAddress.create({ data: { userId, addressText, isDefault: true } });
+      });
+    } catch (error) {
+      this.logger.warn(`Order address not saved to the profile: ${(error as Error).message}`);
+    }
   }
 
   private async priceSelection(dto: QuoteOrderDto) {

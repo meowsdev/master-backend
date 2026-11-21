@@ -7,8 +7,12 @@ const order = (orderStatus: OrderStatus, ...revisions: RevisionStatus[]) => ({
 });
 
 describe('isOrderChatOpen', () => {
-  it.each([OrderStatus.PENDING, OrderStatus.ACCEPTED, OrderStatus.IN_PROGRESS])('is open while %s', (status) => {
+  it.each([OrderStatus.ACCEPTED, OrderStatus.IN_PROGRESS])('is open while %s', (status) => {
     expect(isOrderChatOpen(order(status))).toBe(true);
+  });
+
+  it('stays closed until a provider accepts the order', () => {
+    expect(isOrderChatOpen(order(OrderStatus.PENDING))).toBe(false);
   });
 
   it('closes once completed', () => {

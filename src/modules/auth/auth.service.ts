@@ -337,6 +337,12 @@ export class AuthService {
       },
       select: {
         ...USER_SELECT,
+        // The default saved address fills the Place Order form, so the customer does not type it every time.
+        addresses: {
+          where: { isDefault: true },
+          take: 1,
+          select: { id: true, addressText: true, isDefault: true },
+        },
         customerProfile: {
           select: {
             id: true,
