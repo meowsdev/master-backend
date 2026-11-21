@@ -4,11 +4,13 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { UserRole } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   CreateProviderReviewDto,
   UpdateProviderReviewDto,
 } from './dto/provider-review.dto';
+import { ratingsFromProviders, reviewsFromCustomers } from './received-reviews';
 
 @Injectable()
 export class ProviderReviewService {
@@ -129,6 +131,45 @@ export class ProviderReviewService {
       }
       return review;
     });
+  }
+
+  /**
+   * The signed-in person's own reviews for their profile: the average shown next to their name and the latest
+   * reviews with who wrote them. A customer gets what providers said about them; a provider or technician gets
+   * what customers said about their orders.
+   */
+  async receivedBy(user: { id: string; role: string }) {
+    if (user.role === UserRole.CUSTOMER) {
+      const profile = await this.prisma.customerProfile.findUnique({ where: { userId: user.id }, select: { id: true, rating: true } });
+      if (!profile) return { rating: 0, count: 0, reviews: [] };
+      const [count, reviews] = await Promise.all([
+        this.prisma.customerRating.count({ where: { customerId: profile.id } }),
+        ratingsFromProviders(this.prisma, { customerId: profile.id }),
+      ]);
+      return { rating: Number(profile.rating), count, reviews };
+    }
+
+    if (user.role === UserRole.PROVIDER) {
+      const profile = await this.prisma.providerProfile.findUnique({ where: { userId: user.id }, select: { id: true, rating: true } });
+      if (!profile) return { rating: 0, count: 0, reviews: [] };
+      const [count, reviews] = await Promise.all([
+        this.prisma.providerReview.count({ where: { providerId: profile.id } }),
+        reviewsFromCustomers(this.prisma, { providerId: profile.id }),
+      ]);
+      return { rating: Number(profile.rating), count, reviews };
+    }
+
+    if (user.role === UserRole.TECHNICIAN) {
+      // A technician has no stored average, so it is worked out from the reviews of the orders they did.
+      const where = { order: { technician: { userId: user.id } } };
+      const [summary, reviews] = await Promise.all([
+        this.prisma.providerReview.aggregate({ where, _avg: { customerRating: true }, _count: true }),
+        reviewsFromCustomers(this.prisma, where),
+      ]);
+      return { rating: Number((summary._avg.customerRating ?? 0).toFixed(2)), count: summary._count, reviews };
+    }
+
+    throw new ForbiddenException('Only customers, providers and technicians have reviews');
   }
 
   findAll() {

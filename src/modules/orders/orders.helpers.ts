@@ -70,6 +70,8 @@ export const ORDER_RELATIONS_INCLUDE = {
   advancePayments: { select: { amount: true, method: true, totalAtPayment: true, dueAfter: true, createdAt: true }, orderBy: { createdAt: 'asc' } },
   revisions: true,
   providerReview: true,
+  // The provider's rating of the customer: the customer, the provider side and admins all see it on the order.
+  customerRating: { select: { rating: true, comment: true, createdAt: true } },
 } satisfies Prisma.OrderInclude;
 
 /** The platform keeps 10% of every job; on cash jobs the provider owes it, on online jobs the platform already holds it. */

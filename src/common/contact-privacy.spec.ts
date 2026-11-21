@@ -67,8 +67,9 @@ describe('containsPhoneNumber', () => {
 });
 
 describe('masked phone for users without a username', () => {
-  it('keeps the start and the last four digits and hides five in between', () => {
-    expect(maskPhoneNumber('+8801712345678')).toBe('+8801*****5678');
+  it('shows the first three and last four digits of the local number', () => {
+    expect(maskPhoneNumber('+8801712345678')).toBe('017****5678');
+    expect(maskPhoneNumber('01712344585')).toBe('017****4585');
   });
 
   it('adds maskedPhone only when the user has no username', () => {
@@ -79,7 +80,7 @@ describe('masked phone for users without a username', () => {
       ],
       'provider',
     );
-    expect(noHandle).toEqual({ id: 'c1', username: null, maskedPhone: '+8801*****5678' });
+    expect(noHandle).toEqual({ id: 'c1', username: null, maskedPhone: '017****5678' });
     expect(withHandle).toEqual({ id: 'c2', username: 'rafi' });
   });
 });

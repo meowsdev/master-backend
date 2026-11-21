@@ -6,14 +6,22 @@ const STAFF_ROLES: string[] = [UserRole.ADMIN, UserRole.MANAGER, UserRole.SUPPOR
 export const canSeeContactDetails = (role?: string | null) => Boolean(role && STAFF_ROLES.includes(role));
 
 /**
- * "+8801712345678" -> "+8801*****5678": the last four digits stay, five before them become stars and
- * the start stays. Lets a provider tell customers apart who never set a username, without the number.
+ * "+8801712344585" -> "017****4585": the local number's first three digits, four stars, the last four.
+ * Lets people tell apart users who never set a name or username, without seeing the number.
  */
 export function maskPhoneNumber(phone: string): string {
-  const lastFour = phone.slice(-4);
-  const rest = phone.slice(0, -4);
-  const starCount = Math.min(5, rest.length);
-  return `${rest.slice(0, rest.length - starCount)}${'*'.repeat(starCount)}${lastFour}`;
+  let digits = phone.replace(/\D/g, '');
+  if (digits.startsWith('88') && digits.length > 11) digits = digits.slice(2);
+  if (digits.length < 8) return '*'.repeat(Math.max(0, digits.length - 4)) + digits.slice(-4);
+  return `${digits.slice(0, 3)}****${digits.slice(-4)}`;
+}
+
+/** How a person is named in a group chat, like WhatsApp: name, else @username, else the masked number. */
+export function userDisplayName(user: { name?: string | null; username?: string | null; mobileNumber?: string | null }): string {
+  if (user.name?.trim()) return user.name.trim();
+  if (user.username?.trim()) return `@${user.username.trim()}`;
+  if (user.mobileNumber) return maskPhoneNumber(user.mobileNumber);
+  return 'Unknown';
 }
 
 const HIDDEN_KEYS = ['mobileNumber', 'email'] as const;

@@ -36,7 +36,7 @@ export class CustomerRatingService {
     if (order.orderStatus !== OrderStatus.COMPLETED) {
       throw new BadRequestException('A customer can be rated once the order is completed');
     }
-    // The customer never sees this text, but staff do; the same no-phone-number rule applies everywhere.
+    // The customer and staff both see this text on the order, so the same no-phone-number rule applies.
     assertNoPhoneNumber(dto.comment);
 
     try {

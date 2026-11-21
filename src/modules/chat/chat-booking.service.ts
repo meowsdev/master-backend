@@ -6,6 +6,8 @@ import {
 import { MessageType, PaymentMode } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { findFreeReferenceCode } from '../orders/order-reference';
+import { SENDER_SELECT, withSenderDisplayName } from './message-sender';
+import { userDisplayName } from '../../common/contact-privacy';
 
 @Injectable()
 export class ChatBookingService {
@@ -155,14 +157,7 @@ export class ChatBookingService {
           isSend: true,
         },
         include: {
-          sender: {
-            select: {
-              id: true,
-              name: true,
-              email: true,
-              role: true,
-            },
-          },
+          sender: { select: SENDER_SELECT },
         },
       });
 
@@ -173,7 +168,7 @@ export class ChatBookingService {
 
       return {
         order,
-        message,
+        message: withSenderDisplayName(message),
       };
     });
   }
@@ -298,7 +293,7 @@ export class ChatBookingService {
       }
 
       // 6. Post Confirmation Message in Chat
-      const providerName = providerUser.name || providerUser.mobileNumber;
+      const providerName = userDisplayName(providerUser);
       const message = await tx.message.create({
         data: {
           sessionId: conversationId,
@@ -308,21 +303,14 @@ export class ChatBookingService {
           isSend: true,
         },
         include: {
-          sender: {
-            select: {
-              id: true,
-              name: true,
-              email: true,
-              role: true,
-            },
-          },
+          sender: { select: SENDER_SELECT },
         },
       });
 
       return {
         session: updatedSession,
         provider: providerUser,
-        message,
+        message: withSenderDisplayName(message),
         orderId: activeOrder?.id,
       };
     });

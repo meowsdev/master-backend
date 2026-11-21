@@ -2,6 +2,7 @@ import { BadRequestException, ConflictException, ForbiddenException, Injectable,
 import { OfferStatus, OrderStatus, Prisma, UserRole, UserStatus } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { LocationsService } from '../locations/locations.service';
+import { ratingsFromProviders, reviewsFromCustomers } from '../provider-review/received-reviews';
 import { CreateMemberDto } from './dto/create-member.dto';
 import { ModerationAction } from './dto/moderate-member.dto';
 
@@ -175,9 +176,10 @@ export class AdminMembersService {
     });
     if (!profile) return null;
 
-    const [skills, ordersByStatus] = await Promise.all([
+    const [skills, ordersByStatus, reviews] = await Promise.all([
       this.prisma.serviceAssignee.count({ where: { userId, isActive: true } }),
       this.prisma.order.groupBy({ by: ['orderStatus'], where: { providerId: profile.id, NOT: { orderStatus: OrderStatus.PENDING } }, _count: true }),
+      reviewsFromCustomers(this.prisma, { providerId: profile.id }),
     ]);
 
     const { walletBalance, serviceAreas, technicianProfiles, ...rest } = profile;
@@ -190,6 +192,7 @@ export class AdminMembersService {
       areas: serviceAreas.map((area) => ({ ...area, name: this.areaName(area.districtId, area.upazilaId) })),
       technicians: technicianProfiles.map((technician) => ({ ...technician.user, lastLoginAt: technician.lastLoginAt })),
       ordersByStatus: Object.fromEntries(ordersByStatus.map((row) => [row.orderStatus, row._count])),
+      reviews,
     };
   }
 
@@ -208,12 +211,15 @@ export class AdminMembersService {
         _count: { select: { orders: true } },
       },
     });
+    // Customers review the order; the technician who did it sees those reviews on their profile.
+    const reviews = await reviewsFromCustomers(this.prisma, { order: { technicianId: profile.id } });
     return (
       profile && {
         // The technician profile id is what "change provider" is sent against.
         profileId: profile.id,
         lastLoginAt: profile.lastLoginAt,
         orderCount: profile._count.orders,
+        reviews,
         provider: profile.providerAgency && {
           profileId: profile.providerAgencyId,
           name: profile.providerAgency.companyName || profile.providerAgency.user.name || profile.providerAgency.user.username,
@@ -224,11 +230,11 @@ export class AdminMembersService {
   }
 
   private async customerSection(userId: string) {
-    const profile = await this.prisma.customerProfile.findUnique({ where: { userId }, select: { id: true } });
-    if (!profile) return { orderCount: 0, ordersByStatus: {}, totalSpent: 0, recentOrders: [], services: [] };
+    const profile = await this.prisma.customerProfile.findUnique({ where: { userId }, select: { id: true, rating: true } });
+    if (!profile) return { orderCount: 0, ordersByStatus: {}, totalSpent: 0, rating: 0, recentOrders: [], services: [], ratings: [] };
 
     const where = { customerId: profile.id };
-    const [byStatus, spent, recent, perService] = await Promise.all([
+    const [byStatus, spent, recent, perService, ratings] = await Promise.all([
       this.prisma.order.groupBy({ by: ['orderStatus'], where, _count: true }),
       this.prisma.order.aggregate({ where: { ...where, orderStatus: OrderStatus.COMPLETED }, _sum: { totalPrice: true } }),
       this.prisma.order.findMany({
@@ -246,6 +252,8 @@ export class AdminMembersService {
         },
       }),
       this.prisma.order.groupBy({ by: ['serviceId'], where, _count: true, orderBy: { _count: { serviceId: 'desc' } }, take: 8 }),
+      // What providers and technicians said about this customer after their orders.
+      ratingsFromProviders(this.prisma, where),
     ]);
 
     const serviceNames = await this.prisma.service.findMany({ where: { id: { in: perService.map((row) => row.serviceId) } }, select: { id: true, name: true } });
@@ -255,6 +263,8 @@ export class AdminMembersService {
       orderCount: byStatus.reduce((sum, row) => sum + row._count, 0),
       ordersByStatus: Object.fromEntries(byStatus.map((row) => [row.orderStatus, row._count])),
       totalSpent: Number(spent._sum.totalPrice ?? 0),
+      rating: Number(profile.rating),
+      ratings,
       recentOrders: recent.map((order) => ({
         id: order.id,
         referenceCode: order.referenceCode,

@@ -34,6 +34,12 @@ export class ProviderReviewController {
     return this.providerReviewService.create(data, req.user?.id);
   }
 
+  @Get('me/received')
+  @ApiOperation({ summary: "The signed-in person's own rating and the latest reviews about them, with who wrote each" })
+  findMine(@Req() req: { user: { id: string; role: string } }) {
+    return this.providerReviewService.receivedBy(req.user);
+  }
+
   @Get()
   findAll() {
     return this.providerReviewService.findAll();

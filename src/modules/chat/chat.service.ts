@@ -8,6 +8,7 @@ import { SendMessageDto } from './dto/send-message.dto';
 import { MessageType, PaymentMode, Prisma, UserRole } from '@prisma/client';
 import { isOrderChatOpen, mustChatInsideAnOrder } from './order-chat-policy';
 import { assertNoPhoneNumber, canSeeContactDetails } from '../../common/contact-privacy';
+import { SENDER_SELECT, withSenderDisplayName } from './message-sender';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ChatBookingService } from './chat-booking.service';
 import { ChatSessionService } from './chat-session.service';
@@ -164,13 +165,7 @@ export class ChatService {
           isRead: false,
         },
         include: {
-          sender: {
-            select: {
-              id: true,
-              name: true,
-              role: true,
-            },
-          },
+          sender: { select: SENDER_SELECT },
         },
       });
 
@@ -183,7 +178,7 @@ export class ChatService {
         },
       });
 
-      return message;
+      return withSenderDisplayName(message);
     });
   }
 
@@ -245,7 +240,7 @@ export class ChatService {
       });
     }
 
-    return this.prisma.message.findMany({
+    const messages = await this.prisma.message.findMany({
       where: {
         sessionId,
         isDeleted: false,
@@ -257,15 +252,10 @@ export class ChatService {
       take: limit,
       skip: offset,
       include: {
-        sender: {
-          select: {
-            id: true,
-            name: true,
-            role: true,
-          },
-        },
+        sender: { select: SENDER_SELECT },
       },
     });
+    return messages.map(withSenderDisplayName);
   }
 
   async markConversationAsRead(userId: string, conversationId: string) {

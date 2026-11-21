@@ -56,10 +56,14 @@ export function getCookieOptions() {
   };
 }
 
-/** Empty list means "not configured" (dev): CORS then reflects the origin. */
+/**
+ * Empty list means "allow any origin": CORS then reflects the request origin.
+ * `FRONTEND_ORIGINS=*` (or leaving it unset) allows every origin.
+ */
 export function getFrontendOrigins(): string[] {
-  return (process.env.FRONTEND_ORIGINS || '')
+  const origins = (process.env.FRONTEND_ORIGINS || '')
     .split(',')
     .map((origin) => origin.trim())
     .filter(Boolean);
+  return origins.includes('*') ? [] : origins;
 }

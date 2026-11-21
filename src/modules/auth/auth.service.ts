@@ -343,6 +343,8 @@ export class AuthService {
             address: true,
             gender: true,
             dateOfBirth: true,
+            // Average of the ratings providers gave this customer; shown in the customer's own header.
+            rating: true,
             createdAt: true,
             updatedAt: true,
           },

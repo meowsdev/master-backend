@@ -112,10 +112,11 @@ type TechnicianDetails = { technician?: { profileId: string; provider: unknown; 
 describe('AdminMembersService.getDetails for a technician', () => {
   const memberRow = { id: 't-user', role: 'TECHNICIAN', status: 'ACTIVE', isRestricted: false, districtId: null, upazilaId: null, addresses: [], moderationLog: [] };
 
-  function buildTechnician(profile: object) {
+  function buildTechnician(profile: object, reviews: object[] = []) {
     const prisma = {
       user: { findUnique: jest.fn().mockResolvedValue(memberRow) },
       technicianProfile: { upsert: jest.fn().mockResolvedValue(profile) },
+      providerReview: { findMany: jest.fn().mockResolvedValue(reviews) },
     };
     return { service: new AdminMembersService(prisma as never, { getDistricts: () => [], getUpazilas: () => [] } as never), prisma };
   }
@@ -137,5 +138,17 @@ describe('AdminMembersService.getDetails for a technician', () => {
     });
     const details = (await service.getDetails('t-user')) as unknown as TechnicianDetails;
     expect(details.technician?.provider).toEqual({ profileId: 'pp-9', name: 'Ali Care', mobileNumber: '+8801700000001' });
+  });
+
+  it("lists customers' reviews of the orders the technician did", async () => {
+    const { service, prisma } = buildTechnician(
+      { id: 'tp-1', lastLoginAt: null, providerAgencyId: null, providerAgency: null, _count: { orders: 1 } },
+      [{ orderId: 'o-1', customerRating: 5, reviewComment: 'ভালো কাজ', createdAt: new Date('2026-11-01'), order: { referenceCode: 'A94K2B' }, customer: { user: { name: 'Rahim', username: null } } }],
+    );
+    const details = (await service.getDetails('t-user')) as unknown as { technician: { reviews: unknown[] } };
+    expect(prisma.providerReview.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { order: { technicianId: 'tp-1' } } }));
+    expect(details.technician.reviews).toEqual([
+      { orderId: 'o-1', referenceCode: 'A94K2B', rating: 5, comment: 'ভালো কাজ', createdAt: new Date('2026-11-01'), fromName: 'Rahim' },
+    ]);
   });
 });
