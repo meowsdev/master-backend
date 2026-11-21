@@ -4,7 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { UserRole } from '@prisma/client';
+import { OrderStatus, Prisma, UserRole } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   CreateProviderReviewDto,
@@ -139,37 +139,65 @@ export class ProviderReviewService {
    * what customers said about their orders.
    */
   async receivedBy(user: { id: string; role: string }) {
+    const empty = { rating: 0, count: 0, reviews: [], completedOrders: 0, totalAmount: 0 };
+
     if (user.role === UserRole.CUSTOMER) {
       const profile = await this.prisma.customerProfile.findUnique({ where: { userId: user.id }, select: { id: true, rating: true } });
-      if (!profile) return { rating: 0, count: 0, reviews: [] };
-      const [count, reviews] = await Promise.all([
+      if (!profile) return empty;
+      const [count, reviews, orders] = await Promise.all([
         this.prisma.customerRating.count({ where: { customerId: profile.id } }),
         ratingsFromProviders(this.prisma, { customerId: profile.id }),
+        this.completedTotals({ customerId: profile.id }),
       ]);
-      return { rating: Number(profile.rating), count, reviews };
+      // A customer's amount is what they spent: the full bill of every completed order.
+      return { rating: Number(profile.rating), count, reviews, completedOrders: orders.count, totalAmount: orders.billed };
     }
 
     if (user.role === UserRole.PROVIDER) {
       const profile = await this.prisma.providerProfile.findUnique({ where: { userId: user.id }, select: { id: true, rating: true } });
-      if (!profile) return { rating: 0, count: 0, reviews: [] };
-      const [count, reviews] = await Promise.all([
+      if (!profile) return empty;
+      const [count, reviews, orders] = await Promise.all([
         this.prisma.providerReview.count({ where: { providerId: profile.id } }),
         reviewsFromCustomers(this.prisma, { providerId: profile.id }),
+        this.completedTotals({ providerId: profile.id }),
       ]);
-      return { rating: Number(profile.rating), count, reviews };
+      // A provider's amount is their income: the bills minus the platform's commission.
+      return { rating: Number(profile.rating), count, reviews, completedOrders: orders.count, totalAmount: orders.billed - orders.commission };
     }
 
     if (user.role === UserRole.TECHNICIAN) {
       // A technician has no stored average, so it is worked out from the reviews of the orders they did.
       const where = { order: { technician: { userId: user.id } } };
-      const [summary, reviews] = await Promise.all([
+      const [summary, reviews, orders] = await Promise.all([
         this.prisma.providerReview.aggregate({ where, _avg: { customerRating: true }, _count: true }),
         reviewsFromCustomers(this.prisma, where),
+        this.completedTotals({ technician: { userId: user.id } }),
       ]);
-      return { rating: Number((summary._avg.customerRating ?? 0).toFixed(2)), count: summary._count, reviews };
+      return {
+        rating: Number((summary._avg.customerRating ?? 0).toFixed(2)),
+        count: summary._count,
+        reviews,
+        completedOrders: orders.count,
+        // The work they did, after the platform's commission (the provider pays the technician from it).
+        totalAmount: orders.billed - orders.commission,
+      };
     }
 
     throw new ForbiddenException('Only customers, providers and technicians have reviews');
+  }
+
+  /** How many matching orders were completed, their bills added up, and the platform's commission on them. */
+  private async completedTotals(where: Prisma.OrderWhereInput) {
+    const result = await this.prisma.order.aggregate({
+      where: { ...where, orderStatus: OrderStatus.COMPLETED },
+      _count: true,
+      _sum: { totalPrice: true, adminCommission: true },
+    });
+    return {
+      count: result._count,
+      billed: Number(result._sum.totalPrice ?? 0),
+      commission: Number(result._sum.adminCommission ?? 0),
+    };
   }
 
   findAll() {

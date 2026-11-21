@@ -35,7 +35,9 @@ export class ProviderReviewController {
   }
 
   @Get('me/received')
-  @ApiOperation({ summary: "The signed-in person's own rating and the latest reviews about them, with who wrote each" })
+  @ApiOperation({
+    summary: "The signed-in person's profile summary: rating, latest reviews with who wrote each, completed orders, and total spent (customer) or income (provider, technician)",
+  })
   findMine(@Req() req: { user: { id: string; role: string } }) {
     return this.providerReviewService.receivedBy(req.user);
   }
