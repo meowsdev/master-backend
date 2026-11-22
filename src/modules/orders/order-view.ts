@@ -2,9 +2,7 @@ import { CallHandler, ExecutionContext, Injectable, NestInterceptor } from '@nes
 import { OrderStatus } from '@prisma/client';
 import { map } from 'rxjs';
 import { isOrderChatOpen } from '../chat/order-chat-policy';
-
-/** Warranty window: a completed order can be reopened for a revision for this long. */
-export const REVISION_WINDOW_DAYS = 3;
+import { revisionDeadline } from '../service-revision/revision-window';
 
 /** Stamp the moment an order is completed; it starts the revision window. Empty for other statuses. */
 export function completionStamp(status?: OrderStatus | string) {
@@ -22,9 +20,9 @@ export function acceptanceStamp(currentStatus: OrderStatus | string, newStatus?:
  * the review card stay visible) for as long as the warranty window lasts. Chat itself stays closed.
  */
 export function isReviewPending(order: { orderStatus?: OrderStatus; providerReview?: unknown; completedAt?: Date | null }): boolean {
-  if (order.orderStatus !== OrderStatus.COMPLETED || order.providerReview || !order.completedAt) return false;
-  const windowMs = REVISION_WINDOW_DAYS * 24 * 60 * 60 * 1000;
-  return Date.now() - new Date(order.completedAt).getTime() < windowMs;
+  if (order.orderStatus !== OrderStatus.COMPLETED || order.providerReview) return false;
+  const deadline = revisionDeadline(order);
+  return deadline !== null && Date.now() < deadline.getTime();
 }
 
 interface NamedUser {
@@ -125,6 +123,8 @@ const addOrderView = <T extends object>(order: T) => {
     isAccepted: isOrderAccepted(source),
     isReviewPending: isReviewPending(source),
     isChatOpen: source.orderStatus && source.revisions ? isOrderChatOpen({ orderStatus: source.orderStatus, revisions: source.revisions }) : undefined,
+    /** Last moment the customer (or an admin) may send it back for revision: 7 days after completion. */
+    revisionDeadline: revisionDeadline(source)?.toISOString() ?? null,
   };
 };
 

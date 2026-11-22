@@ -1,10 +1,13 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { RevisionStatus } from '@prisma/client';
 import {
+  ArrayMaxSize,
   IsArray,
   IsBoolean,
   IsDateString,
   IsEnum,
+  IsNotEmpty,
+  MaxLength,
   IsOptional,
   IsString,
   IsUUID,
@@ -15,8 +18,11 @@ export class CreateServiceRevisionDto {
   @IsUUID()
   orderId!: string;
 
+  /** What is wrong. The status and the warranty end are decided by the server. */
   @ApiProperty({ example: 'AC is not cooling after servicing' })
   @IsString()
+  @IsNotEmpty()
+  @MaxLength(1000)
   issueDescription!: string;
 
   @ApiPropertyOptional({
@@ -25,21 +31,9 @@ export class CreateServiceRevisionDto {
   })
   @IsOptional()
   @IsArray()
+  @ArrayMaxSize(10)
   @IsString({ each: true })
   attachedImages?: string[];
-
-  @ApiPropertyOptional({
-    enum: RevisionStatus,
-    example: RevisionStatus.REQUESTED,
-  })
-  @IsOptional()
-  @IsEnum(RevisionStatus)
-  revisionStatus?: RevisionStatus;
-
-  @ApiPropertyOptional({ example: '2026-10-12T00:00:00.000Z' })
-  @IsOptional()
-  @IsDateString()
-  warrantyExpiresAt?: string;
 }
 
 export class UpdateServiceRevisionDto {

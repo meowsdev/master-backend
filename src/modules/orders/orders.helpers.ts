@@ -111,9 +111,11 @@ export function calculateOrderPrices(data: PriceCalculationInput) {
 
 export async function handleCommissionBalance(
   tx: any,
-  order: { orderStatus: string; adminCommission: any; providerId: string },
+  order: { orderStatus: string; adminCommission: any; providerId: string; completedAt?: Date | string | null },
   newStatus?: string,
 ) {
+  // An order is settled once: completing it again after a revision charges nothing and counts nothing.
+  if (order.completedAt) return;
   if (newStatus === 'COMPLETED' && order.orderStatus !== 'COMPLETED') {
     const commission = Number(order.adminCommission || 0);
     if (commission > 0) {

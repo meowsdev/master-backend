@@ -23,6 +23,13 @@ export class OrderCompletionController {
     return this.completion.complete(orderId, dto, req.user);
   }
 
+  @Post(':orderId/finish-revision')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Provider marks the revision (re-work) as done; the order is completed again without new charges' })
+  finishRevision(@Param('orderId', new ParseUUIDPipe()) orderId: string, @Req() req: AuthenticatedRequest) {
+    return this.completion.finishRevision(orderId, req.user);
+  }
+
   @Post(':orderId/pay-online')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Customer accepts and pays online (optional tip); the order completes on success' })

@@ -1,125 +1,131 @@
 import {
   BadRequestException,
+  ConflictException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { OrderStatus, UserRole } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { isOrderStaff } from '../auth/role-policy';
 import {
   CreateServiceRevisionDto,
   UpdateServiceRevisionDto,
 } from './dto/service-revision.dto';
+import { REVISION_WINDOW_DAYS, hasOpenRevision, revisionDeadline } from './revision-window';
+
+type Actor = { id: string; role: UserRole | string };
+
+/** Who may send a completed order back for revision: its customer, or an admin. */
+const canRequestRevision = (actor: Actor, order: { customer: { userId: string } }) =>
+  actor.role === UserRole.ADMIN || order.customer.userId === actor.id;
 
 @Injectable()
 export class ServiceRevisionService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async create(data: CreateServiceRevisionDto) {
-    const order = await this.assertOrder(data.orderId);
-    if (order.orderStatus !== 'COMPLETED') {
-      throw new BadRequestException(
-        'Revisions can only be requested for completed orders',
-      );
+  /**
+   * Sends a completed order back to its provider for a re-touch / re-work, inside the 7-day service
+   * warranty. The order goes back to IN_PROGRESS so the provider works on it again; finishing it
+   * (order-completion `finishRevision`) closes it without charging anything a second time.
+   */
+  async create(data: CreateServiceRevisionDto, actor: Actor) {
+    const order = await this.prisma.order.findUnique({
+      where: { id: data.orderId },
+      select: {
+        id: true,
+        orderStatus: true,
+        completedAt: true,
+        customer: { select: { userId: true } },
+        revisions: { select: { revisionStatus: true } },
+      },
+    });
+    if (!order) throw new NotFoundException('Order not found');
+    if (!canRequestRevision(actor, order)) {
+      throw new ForbiddenException('Only the customer of this order or an admin can request a revision');
+    }
+    if (hasOpenRevision(order.revisions)) throw new ConflictException('This order is already in revision');
+    if (order.orderStatus !== OrderStatus.COMPLETED) {
+      throw new BadRequestException('Revisions can only be requested for completed orders');
     }
 
-    const orderComplitionTime = new Date(order.updatedAt).getTime();
-    const threeDaysInMillis = 3 * 24 * 60 * 60 * 1000;
-    const isWarrantyExpired =
-      Date.now() - orderComplitionTime > threeDaysInMillis;
-
-    if (isWarrantyExpired) {
-      throw new BadRequestException(
-        'Warranty revision window (3 days) has expired for this order',
-      );
+    const deadline = revisionDeadline(order);
+    if (!deadline || Date.now() > deadline.getTime()) {
+      throw new BadRequestException(`The ${REVISION_WINDOW_DAYS}-day service warranty for this order has ended`);
     }
-
-    const defaultWarrentyExpiresAt = new Date(
-      orderComplitionTime + threeDaysInMillis,
-    );
 
     return this.prisma.$transaction(async (tx) => {
-      const revision = await tx.serviceRevision.create({
+      // Re-checked under the write: two taps (or the customer and an admin at once) open only one revision.
+      const reopened = await tx.order.updateMany({
+        where: { id: order.id, orderStatus: OrderStatus.COMPLETED },
+        data: { orderStatus: OrderStatus.IN_PROGRESS },
+      });
+      if (reopened.count === 0) throw new ConflictException('This order is already in revision');
+
+      return tx.serviceRevision.create({
         data: {
-          orderId: data.orderId,
-          issueDescription: data.issueDescription,
+          orderId: order.id,
+          issueDescription: data.issueDescription.trim(),
           attachedImages: data.attachedImages ?? [],
-          revisionStatus: data.revisionStatus ?? 'REQUESTED',
-          warrantyExpiresAt: data.warrantyExpiresAt ?? defaultWarrentyExpiresAt,
-        },
-        include: { order: true },
-      });
-
-      // Transition order back to IN_PROGRESS so provider must complete again
-      await tx.order.update({
-        where: { id: data.orderId },
-        data: {
-          orderStatus: 'IN_PROGRESS',
+          revisionStatus: 'REQUESTED',
+          warrantyExpiresAt: deadline,
         },
       });
-
-      return revision;
     });
   }
 
+  /** Every revision on the platform, newest first. Admin only (guarded in the controller). */
   findAll() {
     return this.prisma.serviceRevision.findMany({
       orderBy: { createdAt: 'desc' },
-      include: { order: true },
+      include: { order: { select: { id: true, referenceCode: true, orderStatus: true } } },
     });
   }
 
-  findByOrder(orderId: string) {
+  /** One order's revisions, for its customer, provider, technician or staff. */
+  async findByOrder(orderId: string, actor: Actor) {
+    await this.assertCanRead(orderId, actor);
     return this.prisma.serviceRevision.findMany({
       where: { orderId },
       orderBy: { createdAt: 'desc' },
-      include: { order: true },
     });
   }
 
-  async findOne(id: string) {
-    const revision = await this.prisma.serviceRevision.findUnique({
-      where: { id },
-      include: { order: true },
-    });
-
+  async findOne(id: string, actor?: Actor) {
+    const revision = await this.prisma.serviceRevision.findUnique({ where: { id } });
     if (!revision) throw new NotFoundException('Service revision not found');
+    if (actor) await this.assertCanRead(revision.orderId, actor);
     return revision;
   }
 
+  /** Admin only (guarded in the controller): correct the description or the status. */
   async update(id: string, data: UpdateServiceRevisionDto) {
     await this.findOne(id);
-
-    return this.prisma.serviceRevision.update({
-      where: { id },
-      data,
-      include: { order: true },
-    });
+    return this.prisma.serviceRevision.update({ where: { id }, data });
   }
 
+  /** Admin only (guarded in the controller). */
   async remove(id: string) {
     await this.findOne(id);
     await this.prisma.serviceRevision.delete({ where: { id } });
     return { message: 'Service revision deleted successfully' };
   }
 
-  async postRevisionFeedback(id: string, continueWithProvider: boolean) {
+  /** The customer's answer after a revision: keep chatting with this provider, or not. */
+  async postRevisionFeedback(id: string, continueWithProvider: boolean, actor: Actor) {
     const revision = await this.prisma.serviceRevision.findUnique({
       where: { id },
-      include: {
-        order: true,
-      },
+      include: { order: { select: { providerId: true, customerId: true, customer: { select: { userId: true } } } } },
     });
-
-    if (!revision) {
-      throw new NotFoundException('Service Revision not found');
+    if (!revision) throw new NotFoundException('Service revision not found');
+    if (revision.order.customer.userId !== actor.id) {
+      throw new ForbiddenException('Only the customer of this order can answer');
     }
 
     return this.prisma.$transaction(async (tx) => {
       const updateRevision = await tx.serviceRevision.update({
         where: { id },
-        data: {
-          revisionStatus: 'COMPLETED',
-        },
-        include: { order: true },
+        data: { revisionStatus: 'COMPLETED' },
       });
       if (!continueWithProvider) {
         await tx.activeChatSlot.updateMany({
@@ -128,9 +134,7 @@ export class ServiceRevisionService {
             customerId: revision.order.customerId,
             status: { in: ['ACTIVE', 'PAUSED'] },
           },
-          data: {
-            status: 'CLOSED',
-          },
+          data: { status: 'CLOSED' },
         });
 
         await tx.customerRetention.updateMany({
@@ -146,21 +150,26 @@ export class ServiceRevisionService {
       }
       return {
         message: continueWithProvider
-          ? 'Feedback submitted . you cah continue chatting with this provider.'
-          : 'Feedback submitted. Provider has been removed from your active chat ',
+          ? 'Feedback submitted. You can continue chatting with this provider.'
+          : 'Feedback submitted. Provider has been removed from your active chat.',
         revision: updateRevision,
       };
     });
   }
 
-  private async assertOrder(orderId: string) {
+  /** The order's customer, provider, technician, or staff. */
+  private async assertCanRead(orderId: string, actor: Actor) {
+    if (isOrderStaff(actor.role)) return;
     const order = await this.prisma.order.findUnique({
       where: { id: orderId },
-      select: { id: true, orderStatus: true, updatedAt: true },
+      select: {
+        customer: { select: { userId: true } },
+        provider: { select: { userId: true } },
+        technician: { select: { userId: true } },
+      },
     });
-
-    if (!order) throw new BadRequestException('Order not found');
-
-    return order;
+    if (!order) throw new NotFoundException('Order not found');
+    const parties = [order.customer.userId, order.provider.userId, order.technician?.userId];
+    if (!parties.includes(actor.id)) throw new ForbiddenException('You are not part of this order');
   }
 }

@@ -206,7 +206,7 @@ export class ChatService {
     }
     if (!isOrderChatOpen(order)) {
       throw new ForbiddenException(
-        'This order is closed. Request a revision within 3 days of completion to chat again.',
+        'This order is closed. Request a revision within 7 days of completion to chat again.',
       );
     }
   }

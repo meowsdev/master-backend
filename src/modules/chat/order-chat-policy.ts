@@ -24,7 +24,7 @@ const OPEN_REVISION_STATUSES: RevisionStatus[] = [RevisionStatus.REQUESTED, Revi
  * - A running order (accepted / in progress) is open.
  * - Once COMPLETED the tab closes and the order only lives in order history ...
  * - ... until the customer asks for a revision. A revision can only be filed within
- *   3 days of completion (enforced in ServiceRevisionService), and it reopens the
+ *   7 days of completion (enforced in ServiceRevisionService), and it reopens the
  *   tab until the order is completed again.
  */
 export function isOrderChatOpen(order: OrderChatState): boolean {

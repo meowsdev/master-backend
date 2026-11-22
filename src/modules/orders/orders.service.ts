@@ -324,7 +324,8 @@ export class OrdersService {
         data: {
           technicianId: data.technicianId,
           orderStatus: data.orderStatus,
-          ...completionStamp(data.orderStatus),
+          // Completed once already (an order back from revision): the warranty keeps counting from then.
+          ...(order.completedAt ? {} : completionStamp(data.orderStatus)),
           ...acceptanceStamp(order.orderStatus, data.orderStatus),
           paymentStatus: data.paymentStatus,
           ...prices,
@@ -360,7 +361,8 @@ export class OrdersService {
         where: { id },
         data: {
           orderStatus: data.orderStatus,
-          ...completionStamp(data.orderStatus),
+          // Completed once already (an order back from revision): the warranty keeps counting from then.
+          ...(order.completedAt ? {} : completionStamp(data.orderStatus)),
           ...acceptanceStamp(order.orderStatus, data.orderStatus),
         },
         include: ORDER_RELATIONS_INCLUDE,

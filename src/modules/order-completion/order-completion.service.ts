@@ -5,6 +5,7 @@ import { handleCommissionBalance } from '../orders/orders.helpers';
 import { completionStamp } from '../orders/order-view';
 import { CompleteOrderDto, PayOnlineDto } from './dto/order-completion.dto';
 import { PaymentGateway } from './payment-gateway';
+import { hasOpenRevision } from '../service-revision/revision-window';
 
 type Actor = { id: string; role: UserRole };
 type Tx = Prisma.TransactionClient;
@@ -21,6 +22,7 @@ const ORDER_SELECT = {
   provider: { select: { userId: true } },
   technician: { select: { userId: true } },
   paymentAndTip: true,
+  revisions: { select: { revisionStatus: true } },
 } satisfies Prisma.OrderSelect;
 
 @Injectable()
@@ -45,6 +47,10 @@ export class OrderCompletionService {
     if (order.orderStatus !== OrderStatus.IN_PROGRESS) {
       throw new BadRequestException('Only an order that is in progress can be completed');
     }
+    // A revision was already paid for: it is finished with finishRevision, never billed again.
+    if (hasOpenRevision(order.revisions)) {
+      throw new ConflictException('This order is in revision. Mark the revision as done instead.');
+    }
     if (order.paymentAndTip?.paymentMode === PaymentMode.ONLINE) {
       throw new ConflictException('Already waiting for the customer to pay online');
     }
@@ -62,6 +68,29 @@ export class OrderCompletionService {
     return this.prisma.$transaction((tx) =>
       this.finishOrder(tx, order, { paymentMode: PaymentMode.CASH, tipAmount: dto.tipAmount ?? 0, deductCommission: true }),
     );
+  }
+
+  /**
+   * Provider (or the assigned technician) says the revision (re-touch / re-work) is done. The order goes
+   * back to COMPLETED as it was: no new payment, no second commission, and the warranty still counts from
+   * the first completion.
+   */
+  async finishRevision(orderId: string, actor: Actor) {
+    const order = await this.loadOrder(orderId);
+
+    const isWorkingOnOrder = order.provider.userId === actor.id || order.technician?.userId === actor.id;
+    if (!isWorkingOnOrder) throw new ForbiddenException('Only the provider handling this order can finish its revision');
+    if (order.orderStatus !== OrderStatus.IN_PROGRESS || !hasOpenRevision(order.revisions)) {
+      throw new BadRequestException('This order has no revision in progress');
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      await tx.serviceRevision.updateMany({
+        where: { orderId, revisionStatus: { in: ['REQUESTED', 'ACCEPTED'] } },
+        data: { revisionStatus: 'COMPLETED' },
+      });
+      return tx.order.update({ where: { id: orderId }, data: { orderStatus: OrderStatus.COMPLETED }, select: { id: true, orderStatus: true } });
+    });
   }
 
   /** The customer's "Accept & Pay": charge the due amount plus tip, then complete the order. */

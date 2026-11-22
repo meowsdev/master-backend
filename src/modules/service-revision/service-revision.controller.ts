@@ -9,10 +9,14 @@ import {
   ParseUUIDPipe,
   Patch,
   Post,
+  Req,
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { UserRole } from '@prisma/client';
+import { Roles } from '../auth/decorators/roles.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { RolesGuard } from '../auth/guards/roles.guard';
 import {
   CreateServiceRevisionDto,
   PostRevisionFeedbackeDto,
@@ -20,9 +24,13 @@ import {
 } from './dto/service-revision.dto';
 import { ServiceRevisionService } from './service-revision.service';
 
+interface AuthenticatedRequest {
+  user: { id: string; role: UserRole };
+}
+
 @ApiTags('Service Revision')
 @ApiBearerAuth('JWT-auth')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('service-revision')
 export class ServiceRevisionController {
   constructor(
@@ -31,27 +39,29 @@ export class ServiceRevisionController {
 
   @Post()
   @HttpCode(HttpStatus.CREATED)
-  @ApiOperation({ summary: 'Create service revision' })
-  create(@Body() data: CreateServiceRevisionDto) {
-    return this.serviceRevisionService.create(data);
+  @ApiOperation({ summary: 'Send a completed order back for revision (7-day warranty). Customer of the order or admin.' })
+  create(@Body() data: CreateServiceRevisionDto, @Req() req: AuthenticatedRequest) {
+    return this.serviceRevisionService.create(data, req.user);
   }
 
   @Get()
+  @Roles(UserRole.ADMIN)
   findAll() {
     return this.serviceRevisionService.findAll();
   }
 
   @Get('order/:orderId')
-  findByOrder(@Param('orderId', new ParseUUIDPipe()) orderId: string) {
-    return this.serviceRevisionService.findByOrder(orderId);
+  findByOrder(@Param('orderId', new ParseUUIDPipe()) orderId: string, @Req() req: AuthenticatedRequest) {
+    return this.serviceRevisionService.findByOrder(orderId, req.user);
   }
 
   @Get(':id')
-  findOne(@Param('id', new ParseUUIDPipe()) id: string) {
-    return this.serviceRevisionService.findOne(id);
+  findOne(@Param('id', new ParseUUIDPipe()) id: string, @Req() req: AuthenticatedRequest) {
+    return this.serviceRevisionService.findOne(id, req.user);
   }
 
   @Patch(':id')
+  @Roles(UserRole.ADMIN)
   update(
     @Param('id', new ParseUUIDPipe()) id: string,
     @Body() data: UpdateServiceRevisionDto,
@@ -60,6 +70,7 @@ export class ServiceRevisionController {
   }
 
   @Delete(':id')
+  @Roles(UserRole.ADMIN)
   remove(@Param('id', new ParseUUIDPipe()) id: string) {
     return this.serviceRevisionService.remove(id);
   }
@@ -72,10 +83,12 @@ export class ServiceRevisionController {
   postFeedback(
     @Param('id', new ParseUUIDPipe()) id: string,
     @Body() data: PostRevisionFeedbackeDto,
+    @Req() req: AuthenticatedRequest,
   ) {
     return this.serviceRevisionService.postRevisionFeedback(
       id,
       data.continueWithProvider,
+      req.user,
     );
   }
 }

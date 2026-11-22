@@ -5,6 +5,7 @@ import { COMMISSION_RATE } from '../orders/orders.helpers';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateExtraChargeDto } from './dto/create-extra-charge.dto';
 import { isOrderStaff } from '../auth/role-policy';
+import { OPEN_REVISION_STATUSES } from '../service-revision/revision-window';
 
 type Actor = { id: string; role: UserRole };
 
@@ -42,6 +43,10 @@ export class OrderExtraChargeService {
     if (order.priceEditCount >= MAX_APPROVED_EXTRA_CHARGES) {
       throw new BadRequestException(`The price can be changed at most ${MAX_APPROVED_EXTRA_CHARGES} times`);
     }
+
+    // Warranty re-work is free: an order back for revision takes no new charges.
+    const openRevisions = await this.prisma.serviceRevision.count({ where: { orderId, revisionStatus: { in: [...OPEN_REVISION_STATUSES] } } });
+    if (openRevisions > 0) throw new BadRequestException('This order is in warranty revision; extra charges cannot be added');
 
     const payment = await this.prisma.orderPaymentAndTip.findUnique({ where: { orderId }, select: { paymentMode: true } });
     if (payment?.paymentMode === 'ONLINE') throw new BadRequestException('The work is finished and waiting for payment');

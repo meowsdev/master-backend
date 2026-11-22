@@ -98,4 +98,32 @@ describe('OrderCompletionService', () => {
     await expect(service.payOnline('order-1', { method: 'BKASH' }, CUSTOMER)).rejects.toBeInstanceOf(ConflictException);
     expect(tx.order.update).not.toHaveBeenCalled();
   });
+
+  describe('revision (7-day warranty)', () => {
+    const inRevision = { revisions: [{ revisionStatus: 'REQUESTED' }], paymentAndTip: { paymentMode: 'CASH' } };
+
+    it('closes the revision and the order again without a new payment or commission', async () => {
+      const { service, tx } = build(inRevision);
+      await service.finishRevision('order-1', PROVIDER);
+      expect(tx.serviceRevision.updateMany).toHaveBeenCalledWith(expect.objectContaining({ data: { revisionStatus: 'COMPLETED' } }));
+      expect(tx.order.update).toHaveBeenCalledWith(expect.objectContaining({ data: { orderStatus: 'COMPLETED' } }));
+      expect(tx.orderPaymentAndTip.upsert).not.toHaveBeenCalled();
+      expect(tx.providerProfile.update).not.toHaveBeenCalled();
+    });
+
+    it('lets only the provider handling the order finish it', async () => {
+      const { service } = build(inRevision);
+      await expect(service.finishRevision('order-1', CUSTOMER)).rejects.toBeInstanceOf(ForbiddenException);
+    });
+
+    it('refuses when there is no revision in progress', async () => {
+      const { service } = build({ revisions: [] });
+      await expect(service.finishRevision('order-1', PROVIDER)).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('will not bill an order in revision a second time through Work Complete', async () => {
+      const { service } = build(inRevision);
+      await expect(service.complete('order-1', { paymentMode: 'CASH' }, PROVIDER)).rejects.toBeInstanceOf(ConflictException);
+    });
+  });
 });
