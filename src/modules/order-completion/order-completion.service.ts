@@ -20,7 +20,8 @@ const ORDER_SELECT = {
   providerId: true,
   // Set once the order was first settled; a later settlement only pays for revision extras.
   completedAt: true,
-  customer: { select: { userId: true } },
+  // isVerified: false until the customer verifies their number by OTP; they cannot pay online until then.
+  customer: { select: { userId: true, user: { select: { isVerified: true } } } },
   provider: { select: { userId: true } },
   technician: { select: { userId: true } },
   paymentAndTip: true,
@@ -58,6 +59,7 @@ export class OrderCompletionService {
     }
 
     if (dto.paymentMode === 'ONLINE') {
+      this.assertCanPayOnline(order);
       if (dto.tipAmount) throw new BadRequestException('An online tip is paid by the customer in the app');
       return this.prisma.orderPaymentAndTip.upsert({
         where: { orderId },
@@ -100,6 +102,7 @@ export class OrderCompletionService {
     if (isMoneyDue && !dto.paymentMode) {
       throw new BadRequestException('Extra charges were added during this revision; choose how the customer pays');
     }
+    if (isMoneyDue && dto.paymentMode === 'ONLINE') this.assertCanPayOnline(order);
 
     const record = { completionReason: dto.reason.trim(), wasQualityIssue: dto.wasQualityIssue };
     const openRevisions = { orderId, revisionStatus: { in: [...OPEN_REVISION_STATUSES] } };
@@ -127,6 +130,16 @@ export class OrderCompletionService {
       }
       return { id: orderId, orderStatus: OrderStatus.COMPLETED };
     });
+  }
+
+  /**
+   * Online payment is the customer's "Accept & Pay" in the app. A customer who never verified their number by
+   * OTP (e.g. an admin placed the order for them by phone) cannot reach it, so the provider takes cash.
+   */
+  private assertCanPayOnline(order: { customer: { user: { isVerified: boolean } } }) {
+    if (!order.customer.user.isVerified) {
+      throw new BadRequestException('This customer has not verified their number by OTP, so they cannot pay online. Take the payment in cash.');
+    }
   }
 
   /** The customer's "Accept & Pay": charge the due amount plus tip, then complete the order. */

@@ -44,6 +44,8 @@ export const ORDER_RELATIONS_INCLUDE = {
           mobileNumber: true,
           role: true,
           status: true,
+          // False until the customer verifies their number by OTP: such a customer cannot pay online.
+          isVerified: true,
         },
       },
     },

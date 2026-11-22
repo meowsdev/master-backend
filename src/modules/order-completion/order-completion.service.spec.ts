@@ -14,7 +14,7 @@ function build(orderOverrides: Record<string, unknown> = {}) {
     dueAmount: 2900,
     adminCommission: 290,
     providerId: 'provider-profile',
-    customer: { userId: CUSTOMER.id },
+    customer: { userId: CUSTOMER.id, user: { isVerified: true } },
     provider: { userId: PROVIDER.id },
     technician: null,
     paymentAndTip: null,
@@ -57,6 +57,18 @@ describe('OrderCompletionService', () => {
     await service.complete('order-1', { paymentMode: 'ONLINE' }, PROVIDER);
     expect(prisma.orderPaymentAndTip.upsert).toHaveBeenCalled();
     expect(tx.order.update).not.toHaveBeenCalled();
+  });
+
+  it('refuses online payment for a customer who never verified their number by OTP', async () => {
+    const { service, prisma } = build({ customer: { userId: CUSTOMER.id, user: { isVerified: false } } });
+    await expect(service.complete('order-1', { paymentMode: 'ONLINE' }, PROVIDER)).rejects.toThrow('cannot pay online');
+    expect(prisma.orderPaymentAndTip.upsert).not.toHaveBeenCalled();
+  });
+
+  it('still completes a cash job for a customer who never verified', async () => {
+    const { service, tx } = build({ customer: { userId: CUSTOMER.id, user: { isVerified: false } } });
+    await service.complete('order-1', { paymentMode: 'CASH' }, PROVIDER);
+    expect(tx.order.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ orderStatus: 'COMPLETED' }) }));
   });
 
   it('records the tip the provider reports on a cash job', async () => {

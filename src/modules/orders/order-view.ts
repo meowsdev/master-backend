@@ -125,8 +125,14 @@ const addOrderView = <T extends object>(order: T) => {
     isChatOpen: source.orderStatus && source.revisions ? isOrderChatOpen({ orderStatus: source.orderStatus, revisions: source.revisions }) : undefined,
     /** Last moment the customer (or an admin) may send it back for revision: 7 days after completion. */
     revisionDeadline: revisionDeadline(source)?.toISOString() ?? null,
+    /** False when the customer has not verified their number by OTP: the provider can only take cash. */
+    canPayOnline: customerCanPayOnline(order as Parameters<typeof customerCanPayOnline>[0]),
   };
 };
+
+/** Unknown (the customer was not loaded) counts as yes; the completion endpoint checks again. */
+const customerCanPayOnline = (order: { customer?: { user?: { isVerified?: boolean | null } | null } | null }) =>
+  order.customer?.user?.isVerified !== false;
 
 /** Adds `assignee` names and `isChatOpen` to every order the orders endpoints return (one order or a list). */
 @Injectable()
