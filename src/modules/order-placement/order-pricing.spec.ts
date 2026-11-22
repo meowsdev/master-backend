@@ -33,3 +33,4 @@ describe('calculateQuote', () => {
     expect(calculateQuote(acWash, 1, [{ questionText: 'q', option: no, count: 1 }]).lines).toHaveLength(1);
   });
 });
+

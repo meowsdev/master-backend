@@ -1,4 +1,5 @@
 import { assertNoPhoneNumber } from '../../common/contact-privacy';
+import { phoneLookupVariants } from '../../common/phone';
 import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Prisma, PriceUnit, UserRole } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -90,19 +91,63 @@ export class OrderPlacementService {
   async placeOrderForCustomer(dto: AdminPlaceOrderDto) {
     const { customerPhone, customerName, ...order } = dto;
 
-    let customer = await this.prisma.user.findUnique({ where: { mobileNumber: customerPhone }, select: { id: true, role: true, status: true } });
+    // Found however the number was stored (+880..., 880..., 01...), so no second account is made next to theirs.
+    const customer = await this.findUserByPhone(customerPhone);
     if (customer && customer.role !== UserRole.CUSTOMER) {
       throw new BadRequestException(`This number belongs to a ${customer.role.toLowerCase()}, not a customer`);
     }
     if (customer && customer.status !== 'ACTIVE') {
       throw new BadRequestException('This customer is blocked or banned and cannot be ordered for');
     }
-    customer ??= await this.prisma.user.create({
-      data: { mobileNumber: customerPhone, name: customerName?.trim() || null, role: UserRole.CUSTOMER, status: 'ACTIVE' },
-      select: { id: true, role: true, status: true },
-    });
+    const customerId =
+      customer?.id ??
+      (
+        await this.prisma.user.create({
+          data: { mobileNumber: customerPhone, name: customerName?.trim() || null, role: UserRole.CUSTOMER, status: 'ACTIVE' },
+          select: { id: true },
+        })
+      ).id;
 
-    return this.placeOrder(order, { id: customer.id, role: UserRole.CUSTOMER });
+    return this.placeOrder(order, { id: customerId, role: UserRole.CUSTOMER });
+  }
+
+  /**
+   * Admin's New order form: who this number is, so the form fills in the customer's name and the place they
+   * use (their saved address, else their latest order's). `found: false` for a new number.
+   */
+  async lookupCustomer(phone: string) {
+    const user = await this.findUserByPhone(phone);
+    if (!user) return { found: false as const };
+
+    const base = { found: true as const, name: user.name, role: user.role, status: user.status };
+    if (user.role !== UserRole.CUSTOMER) return { ...base, districtId: null, upazilaId: null, addressDetail: null };
+
+    const [saved, lastOrder] = await Promise.all([
+      this.prisma.userAddress.findFirst({ where: { userId: user.id, isDefault: true }, select: { addressText: true } }),
+      this.prisma.orderBookingDetail.findFirst({
+        where: { order: { customer: { userId: user.id } } },
+        orderBy: { createdAt: 'desc' },
+        select: { districtId: true, upazilaId: true, addressDetail: true },
+      }),
+    ]);
+    // A district without its upazila is half a place, so the profile's pair is used only when both are there.
+    const hasProfileArea = Boolean(user.districtId && user.upazilaId);
+
+    return {
+      ...base,
+      districtId: hasProfileArea ? user.districtId : (lastOrder?.districtId ?? null),
+      upazilaId: hasProfileArea ? user.upazilaId : (lastOrder?.upazilaId ?? null),
+      addressDetail: saved?.addressText ?? lastOrder?.addressDetail ?? null,
+    };
+  }
+
+  private findUserByPhone(phone: string) {
+    return this.prisma.user.findFirst({
+      where: { mobileNumber: { in: phoneLookupVariants(phone) } },
+      // If old data holds the number twice, the first (original) account wins.
+      orderBy: { createdAt: 'asc' },
+      select: { id: true, name: true, role: true, status: true, districtId: true, upazilaId: true },
+    });
   }
 
   async placeOrder(dto: PlaceOrderDto, user: { id: string; role: UserRole }) {

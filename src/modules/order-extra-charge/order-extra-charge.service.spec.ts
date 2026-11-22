@@ -64,10 +64,10 @@ describe('extra bill for a customer who does not use the app', () => {
   const dto = { items: [{ label: 'Gas refill', amount: 1600 }] };
   const provider = { id: 'provider-user', role: 'PROVIDER' as const };
 
-  it('is set to approve itself after 30 minutes when the customer never signed in', async () => {
+  it('is set to approve itself after 15 minutes when the customer never signed in', async () => {
     const { service } = buildRequest(false);
     const created = await service.request('o1', dto, provider);
-    expect(created.autoApproveAt).toEqual(new Date(NOW.getTime() + 30 * 60 * 1000));
+    expect(created.autoApproveAt).toEqual(new Date(NOW.getTime() + 15 * 60 * 1000));
   });
 
   it('allows extra charges during a warranty revision (parts are not covered)', async () => {

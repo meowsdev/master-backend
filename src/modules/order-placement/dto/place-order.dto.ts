@@ -89,6 +89,13 @@ export class PlaceOrderDto extends QuoteOrderDto {
   imageUrls?: string[];
 }
 
+/** The admin's New order form asks who a number is before the order is placed. */
+export class CustomerLookupQueryDto {
+  @ApiProperty({ example: '+8801712345678' })
+  @IsPhoneNumber()
+  phone!: string;
+}
+
 /** An order an admin places for a customer who did not order through the app. */
 export class AdminPlaceOrderDto extends PlaceOrderDto {
   @ApiProperty({ example: '+8801712345678', description: 'The customer; created as a customer account if the number is new' })

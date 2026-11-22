@@ -1,10 +1,10 @@
-import { Body, Controller, Get, HttpCode, HttpStatus, Post, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, HttpStatus, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { UserRole } from '@prisma/client';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { RolesGuard } from '../auth/guards/roles.guard';
-import { AdminPlaceOrderDto, PlaceOrderDto, QuoteOrderDto } from './dto/place-order.dto';
+import { AdminPlaceOrderDto, CustomerLookupQueryDto, PlaceOrderDto, QuoteOrderDto } from './dto/place-order.dto';
 import { OrderPlacementService } from './order-placement.service';
 
 interface AuthenticatedRequest {
@@ -36,6 +36,15 @@ export class OrderPlacementController {
   @ApiOperation({ summary: 'Place an order; the price is computed on the server' })
   place(@Body() dto: PlaceOrderDto, @Req() req: AuthenticatedRequest) {
     return this.placement.placeOrder(dto, req.user);
+  }
+
+  @Get('admin/customer')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.MANAGER)
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({ summary: "ADMIN: who this number is, with the customer's name and last place, to fill the New order form" })
+  lookupCustomer(@Query() query: CustomerLookupQueryDto) {
+    return this.placement.lookupCustomer(query.phone);
   }
 
   @Post('admin')

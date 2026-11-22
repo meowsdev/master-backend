@@ -15,7 +15,7 @@ type Decision = 'APPROVED' | 'REJECTED';
  * bill, so it is approved automatically after this many minutes; the provider explains it on site. Customers
  * who use the app always answer themselves. Overridable with EXTRA_CHARGE_AUTO_APPROVE_MINUTES.
  */
-export const autoApproveMinutes = () => Number(process.env.EXTRA_CHARGE_AUTO_APPROVE_MINUTES) || 30;
+export const autoApproveMinutes = () => Number(process.env.EXTRA_CHARGE_AUTO_APPROVE_MINUTES) || 15;
 
 /** Per the provider rules, the price may be changed at most twice per order. */
 export const MAX_APPROVED_EXTRA_CHARGES = 2;

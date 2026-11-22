@@ -74,3 +74,4 @@ export function calculateQuote(
 function line(label: string, unitPrice: number, count: number): PriceLine {
   return { label, unitPrice, count, amount: unitPrice * count };
 }
+
