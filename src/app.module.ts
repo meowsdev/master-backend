@@ -13,6 +13,7 @@ import { ChatModule } from './modules/chat/chat.module';
 import { SupportChatModule } from './modules/support-chat/support-chat.module';
 import { ProviderServiceAreasModule } from './modules/provider-service-areas/provider-service-areas.module';
 import { AdminMembersModule } from './modules/admin-members/admin-members.module';
+import { AdminStaffModule } from './modules/admin-staff/admin-staff.module';
 import { OrderAssignmentModule } from './modules/order-assignment/order-assignment.module';
 import { OrderTechnicianModule } from './modules/order-technician/order-technician.module';
 import { UserAddressModule } from './modules/user-address/user-address.module';
@@ -52,6 +53,7 @@ import { LocationsModule } from './modules/locations/locations.module';
     SupportChatModule,
     ProviderServiceAreasModule,
     AdminMembersModule,
+    AdminStaffModule,
     OrderAssignmentModule,
     OrderTechnicianModule,
     UserAddressModule,

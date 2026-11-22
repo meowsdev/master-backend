@@ -91,7 +91,9 @@ export class OrdersService {
       isOfferedToGroup = true;
     }
 
-    await assertProvider(this.prisma, providerId);
+    // A provider named directly must be able to take work now. An order offered to a group only has a stand-in
+    // here (it may owe a due: a negative wallet still gets offers), and the wallet is checked when someone accepts.
+    if (!isOfferedToGroup) await assertProvider(this.prisma, providerId);
     await assertTechnician(this.prisma, data.technicianId);
 
     // A customer may run several orders of the same service at once; each order has its own

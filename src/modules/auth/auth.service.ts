@@ -75,6 +75,8 @@ export class AuthService {
     // An existing account is found however its number was written (+880..., 880..., 01...). Otherwise a second,
     // empty customer account would be made next to the real one, and the person would land in the wrong role.
     const existingId = await this.findUserIdByPhone(data.phoneNumber);
+    // Signing in must never lift a block or a ban: only staff can (admin-members moderation).
+    if (existingId) await this.assertNotBlocked(existingId);
     const user = existingId
       ? await this.prisma.user.update({ where: { id: existingId }, data: { isVerified: true, status: 'ACTIVE' }, select: USER_SELECT })
       : await this.prisma.user.create({ data: { mobileNumber: data.phoneNumber, isVerified: true, status: 'ACTIVE' }, select: USER_SELECT });
@@ -94,6 +96,13 @@ export class AuthService {
       user,
       tokens,
     };
+  }
+
+  /** A blocked (SUSPENDED) or BANNED account cannot sign in; INACTIVE accounts are reactivated by signing in. */
+  private async assertNotBlocked(userId: string) {
+    const account = await this.prisma.user.findUnique({ where: { id: userId }, select: { status: true } });
+    if (account?.status === 'BANNED') throw new ForbiddenException('This account is banned. Please contact support.');
+    if (account?.status === 'SUSPENDED') throw new ForbiddenException('This account is blocked. Please contact support.');
   }
 
   /** The account for a phone number, matching the exact stored form first and the other known forms after it. */
@@ -128,6 +137,8 @@ export class AuthService {
         `This phone number is registered as ${user.role}. Each phone number can only have one role and cannot be used as a technician.`,
       );
     }
+    // Signing in must never lift a block or a ban.
+    await this.assertNotBlocked(user.id);
 
     await this.prisma.technicianProfile.upsert({
       where: { userId: user.id },

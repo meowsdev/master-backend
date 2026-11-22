@@ -18,6 +18,17 @@ export const SELF_SERVICE_SIGNUP_ROLES: readonly UserRole[] = [
 ];
 
 /**
+ * Staff positions an admin can give from the website (admin/staff). ADMIN itself is not in the list:
+ * a new admin is never made from the screen, so no admin account can quietly create another.
+ */
+export const GRANTABLE_STAFF_ROLES: readonly UserRole[] = [
+  UserRole.MANAGER,
+  UserRole.SUPPORT,
+  UserRole.HR,
+  UserRole.COUNSELOR,
+];
+
+/**
  * Staff who may open any order, read its chat and write into it. What else each of them may do
  * (assign, edit services, manage members) is decided per endpoint.
  */

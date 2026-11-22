@@ -5,10 +5,11 @@ import { AuthService } from './auth.service';
 
 const user = { id: 'u1', mobileNumber: '01700000777', role: 'TECHNICIAN', name: 'Manik' };
 
-function build(found: Array<{ id: string; mobileNumber: string }>) {
+function build(found: Array<{ id: string; mobileNumber: string }>, status = 'ACTIVE') {
   const prisma = {
     user: {
       findMany: jest.fn().mockResolvedValue(found),
+      findUnique: jest.fn().mockResolvedValue({ status }),
       update: jest.fn().mockResolvedValue(user),
       create: jest.fn().mockResolvedValue({ ...user, id: 'new' }),
     },
@@ -43,5 +44,13 @@ describe('AuthService.verifyOtp finds an account however its number was written'
     await service.verifyOtp({ phoneNumber: '+8801799999999', code: '123456' });
     expect(prisma.user.create).toHaveBeenCalled();
     expect(prisma.user.update).not.toHaveBeenCalled();
+  });
+
+  it('does not let a banned or blocked account sign itself back in', async () => {
+    for (const status of ['BANNED', 'SUSPENDED']) {
+      const { service, prisma } = build([{ id: 'u1', mobileNumber: '+8801700000777' }], status);
+      await expect(service.verifyOtp({ phoneNumber: '+8801700000777', code: '123456' })).rejects.toThrow(/banned|blocked/);
+      expect(prisma.user.update).not.toHaveBeenCalled();
+    }
   });
 });

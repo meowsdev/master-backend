@@ -22,7 +22,9 @@ export class ContactPrivacyInterceptor implements NestInterceptor {
     if (context.getType() !== 'http') return next.handle();
 
     const request = context.switchToHttp().getRequest<PrivacyRequest>();
-    const path = (request.url ?? '').split('?')[0].replace(/^\/api(?=\/)/, '');
+    // "/api/v1/auth/me" -> "/auth/me". Without the version strip no route ever matched, so a user's own number
+    // came back masked right after login (the login response has no signed-in user yet to call it "own").
+    const path = (request.url ?? '').split('?')[0].replace(/^\/api(\/v\d+)?(?=\/)/, '');
     if (EXEMPT_PREFIXES.some((prefix) => path.startsWith(prefix))) return next.handle();
     // An admin sees everyone's full number and email.
     if (canSeeFullPhoneNumbers(request.user?.role)) return next.handle();
