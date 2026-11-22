@@ -156,25 +156,27 @@ model User {
   createdAt    DateTime   @default(now())
   updatedAt    DateTime   @updatedAt
 
-  addresses             UserAddress[]
-  counselorProfile      CounselorProfile?
-  customerProfile       CustomerProfile?
-  providerProfile       ProviderProfile?
-  technicianProfile     TechnicianProfile?
-  refreshTokens         RefreshToken[]
-  serviceAssignments    ServiceAssignee[]
-  chatParticipants      ChatParticipant[]
-  sentMessages          Message[]            @relation("SentMessages")
-  extraChargeRequests   ExtraChargeRequest[] @relation("ExtraChargeRequester")
-  sentChatAuditLogs     ChatAuditLog[]       @relation("ChatAuditSender")
-  customerChatSessions  ChatSession[]        @relation("ChatSessionCustomer")
-  counselorChatSessions ChatSession[]        @relation("ChatSessionCounselor")
-  providerChatSessions  ChatSession[]        @relation("ChatSessionProvider")
-  supportThread         SupportThread?       @relation("SupportThreadMember")
-  sentSupportMessages   SupportMessage[]     @relation("SupportMessageSender")
-  moderationLog         UserModerationLog[]  @relation("ModeratedUser")
-  moderationsDone       UserModerationLog[]  @relation("ModerationActor")
-  orderAssignmentsDone  OrderAssignmentLog[] @relation("OrderAssignmentActor")
+  addresses              UserAddress[]
+  counselorProfile       CounselorProfile?
+  customerProfile        CustomerProfile?
+  providerProfile        ProviderProfile?
+  technicianProfile      TechnicianProfile?
+  refreshTokens          RefreshToken[]
+  serviceAssignments     ServiceAssignee[]
+  chatParticipants       ChatParticipant[]
+  sentMessages           Message[]            @relation("SentMessages")
+  extraChargeRequests    ExtraChargeRequest[] @relation("ExtraChargeRequester")
+  expenseClaimsSubmitted OrderExpenseClaim[]  @relation("ExpenseClaimSubmitter")
+  expenseClaimsReviewed  OrderExpenseClaim[]  @relation("ExpenseClaimReviewer")
+  sentChatAuditLogs      ChatAuditLog[]       @relation("ChatAuditSender")
+  customerChatSessions   ChatSession[]        @relation("ChatSessionCustomer")
+  counselorChatSessions  ChatSession[]        @relation("ChatSessionCounselor")
+  providerChatSessions   ChatSession[]        @relation("ChatSessionProvider")
+  supportThread          SupportThread?       @relation("SupportThreadMember")
+  sentSupportMessages    SupportMessage[]     @relation("SupportMessageSender")
+  moderationLog          UserModerationLog[]  @relation("ModeratedUser")
+  moderationsDone        UserModerationLog[]  @relation("ModerationActor")
+  orderAssignmentsDone   OrderAssignmentLog[] @relation("OrderAssignmentActor")
 
   @@index([mobileNumber, name])
 }
@@ -563,6 +565,7 @@ model Order {
   service         Service               @relation(fields: [serviceId], references: [id], onDelete: Restrict)
   paymentAndTip   OrderPaymentAndTip?
   revisions       ServiceRevision[]
+  expenseClaims   OrderExpenseClaim[]
   providerReview  ProviderReview?
   bookingDetail   OrderBookingDetail?
   items           OrderItem[]
@@ -907,4 +910,39 @@ model OrderAssignmentLog {
   provider ProviderProfile @relation(fields: [providerId], references: [id], onDelete: Cascade)
 
   @@index([orderId, createdAt])
+}
+
+enum ExpenseClaimStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+/// What the provider / technician spent on a finished job (parts bought, other costs). An admin reviews it,
+/// may change the amounts, and on approval the platform commission is worked out on (total - approved costs).
+model OrderExpenseClaim {
+  id               String             @id @default(uuid())
+  orderId          String
+  submittedById    String
+  /// [{ label, amount }] as the provider sent it.
+  items            Json
+  claimedTotal     Decimal            @db.Decimal(10, 2)
+  /// [{ label, amount }] after the admin review; set on approval.
+  approvedItems    Json?
+  approvedTotal    Decimal?           @db.Decimal(10, 2)
+  status           ExpenseClaimStatus @default(PENDING)
+  reviewNote       String?            @db.VarChar(300)
+  reviewedById     String?
+  reviewedAt       DateTime?
+  /// The order commission before and after the approval, kept for the record.
+  commissionBefore Decimal?           @db.Decimal(10, 2)
+  commissionAfter  Decimal?           @db.Decimal(10, 2)
+  createdAt        DateTime           @default(now())
+
+  order       Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  submittedBy User  @relation("ExpenseClaimSubmitter", fields: [submittedById], references: [id], onDelete: Restrict)
+  reviewedBy  User? @relation("ExpenseClaimReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+
+  @@index([orderId])
+  @@index([status])
 }

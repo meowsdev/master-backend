@@ -199,13 +199,15 @@ export class OrdersService {
       include: {
         ...ORDER_RELATIONS_INCLUDE,
         offers: { where: { status: 'OFFERED', expiresAt: { gt: new Date() } }, select: { id: true }, take: 1 },
-        _count: { select: { offers: true } },
+        _count: { select: { offers: true, expenseClaims: { where: { status: 'PENDING' } } } },
       },
     });
     return orders.map(({ offers, _count, ...order }) => ({
       ...order,
       needsAttention: order.orderStatus === OrderStatus.PENDING && offers.length === 0,
       offerCount: _count.offers,
+      // The provider sent the job's costs and an admin has not reviewed them yet.
+      hasPendingExpenseClaim: _count.expenseClaims > 0,
     }));
   }
 

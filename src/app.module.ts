@@ -26,6 +26,7 @@ import { OrderPlacementModule } from './modules/order-placement/order-placement.
 import { UploadsModule } from './modules/uploads/uploads.module';
 import { OrderPaymentTipModule } from './modules/order-payment-tip/order-payment-tip.module';
 import { OrderExtraChargeModule } from './modules/order-extra-charge/order-extra-charge.module';
+import { OrderExpenseClaimModule } from './modules/order-expense-claim/order-expense-claim.module';
 import { OrderCompletionModule } from './modules/order-completion/order-completion.module';
 import { AdminDirectoryModule } from './modules/admin-directory/admin-directory.module';
 import { OrderAdvancePaymentModule } from './modules/order-advance-payment/order-advance-payment.module';
@@ -64,6 +65,7 @@ import { LocationsModule } from './modules/locations/locations.module';
     UploadsModule,
     OrderPaymentTipModule,
     OrderExtraChargeModule,
+    OrderExpenseClaimModule,
     OrderCompletionModule,
     AdminDirectoryModule,
     OrderAdvancePaymentModule,
