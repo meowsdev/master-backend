@@ -14,8 +14,11 @@ export class RedisService implements OnModuleDestroy {
       maxRetriesPerRequest: 2,
     });
 
-    this.client.on('error', (error) => {
-      this.logger.warn(`Redis unavailable: ${error.message}`);
+    this.client.on('error', (error: Error & { code?: string }) => {
+      // AggregateError (IPv4+IPv6 both refused) has an empty message — show the code instead
+      this.logger.warn(
+        `Redis unavailable: ${error.message || error.code || error.name}`,
+      );
     });
   }
 
