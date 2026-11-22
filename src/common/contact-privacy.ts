@@ -5,6 +5,9 @@ import { UserRole } from '@prisma/client';
 const STAFF_ROLES: string[] = [UserRole.ADMIN, UserRole.MANAGER, UserRole.SUPPORT, UserRole.HR, UserRole.COUNSELOR];
 export const canSeeContactDetails = (role?: string | null) => Boolean(role && STAFF_ROLES.includes(role));
 
+/** Only an admin sees other people's full phone numbers; everyone else sees them masked ("017****4585"). */
+export const canSeeFullPhoneNumbers = (role?: string | null) => role === UserRole.ADMIN;
+
 /**
  * "+8801712344585" -> "017****4585": the local number's first three digits, four stars, the last four.
  * Lets people tell apart users who never set a name or username, without seeing the number.
@@ -24,29 +27,37 @@ export function userDisplayName(user: { name?: string | null; username?: string 
   return 'Unknown';
 }
 
-const HIDDEN_KEYS = ['mobileNumber', 'email'] as const;
-
 const isPlainObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && Object.getPrototypeOf(value) === Object.prototype;
 
 /**
- * Removes every phone number and email from a response, except the viewer's own.
+ * Hides other people's contact details in a response; the viewer's own stay as they are.
+ * - Phone numbers are masked (callers skip this for an admin, see `canSeeFullPhoneNumbers`): `mobileNumber`
+ *   becomes "017****4585" (also copied to `maskedPhone`), so people can be told apart without the full number.
+ * - Emails are removed, unless `canSeeEmails` (platform staff).
  * An object belongs to the viewer when its `id` is theirs (a User row). Plain objects and arrays are
  * walked; dates and Decimal values are left alone.
  */
-export function stripContactDetails<T>(value: T, viewerId: string | null): T {
-  if (Array.isArray(value)) return value.map((item) => stripContactDetails(item, viewerId)) as T;
+export function protectContactDetails<T>(value: T, viewerId: string | null, canSeeEmails = false): T {
+  if (Array.isArray(value)) return value.map((item) => protectContactDetails(item, viewerId, canSeeEmails)) as T;
   if (!isPlainObject(value)) return value;
 
   const isViewersOwn = viewerId !== null && value.id === viewerId;
-  const cleaned: Record<string, unknown> = {};
-  // A user without a username is shown by a masked number instead.
-  if (!isViewersOwn && typeof value.mobileNumber === 'string' && 'username' in value && !value.username) {
-    cleaned.maskedPhone = maskPhoneNumber(value.mobileNumber);
+  if (isViewersOwn) {
+    const own: Record<string, unknown> = {};
+    for (const [key, child] of Object.entries(value)) own[key] = protectContactDetails(child, viewerId, canSeeEmails);
+    return own as T;
   }
+
+  const cleaned: Record<string, unknown> = {};
   for (const [key, child] of Object.entries(value)) {
-    if (!isViewersOwn && (HIDDEN_KEYS as readonly string[]).includes(key)) continue;
-    cleaned[key] = stripContactDetails(child, viewerId);
+    if (key === 'email' && !canSeeEmails) continue;
+    if (key === 'mobileNumber' && typeof child === 'string') {
+      cleaned.mobileNumber = maskPhoneNumber(child);
+      cleaned.maskedPhone = cleaned.mobileNumber;
+      continue;
+    }
+    cleaned[key] = protectContactDetails(child, viewerId, canSeeEmails);
   }
   return cleaned as T;
 }

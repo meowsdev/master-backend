@@ -1,9 +1,9 @@
 import { CallHandler, ExecutionContext, Injectable, NestInterceptor } from '@nestjs/common';
 import { map } from 'rxjs';
-import { canSeeContactDetails, stripContactDetails } from './contact-privacy';
+import { canSeeContactDetails, canSeeFullPhoneNumbers, protectContactDetails } from './contact-privacy';
 
-/** Routes that legitimately return the caller's own details or the provider's own team. */
-const EXEMPT_PREFIXES = ['/auth', '/technician-profile'];
+/** Routes that only ever return the caller's own details (login, session, profile). */
+const EXEMPT_PREFIXES = ['/auth'];
 
 interface PrivacyRequest {
   url?: string;
@@ -11,9 +11,10 @@ interface PrivacyRequest {
 }
 
 /**
- * Last line of defence for contact privacy: whatever a service returns, phone numbers and emails
- * of other people are removed before the response leaves the server. Only the viewer's own details
- * and platform staff are exempt. Services that forget to hide a number cannot leak it.
+ * Last line of defence for contact privacy: whatever a service returns, other people's phone numbers
+ * leave the server masked ("017****4585") for everyone except an admin, and their emails are removed
+ * unless the viewer is staff. The viewer's own details are untouched. Services that forget to hide a
+ * number cannot leak it.
  */
 @Injectable()
 export class ContactPrivacyInterceptor implements NestInterceptor {
@@ -22,9 +23,12 @@ export class ContactPrivacyInterceptor implements NestInterceptor {
 
     const request = context.switchToHttp().getRequest<PrivacyRequest>();
     const path = (request.url ?? '').split('?')[0].replace(/^\/api(?=\/)/, '');
-    const isExempt = EXEMPT_PREFIXES.some((prefix) => path.startsWith(prefix));
-    if (isExempt || canSeeContactDetails(request.user?.role)) return next.handle();
+    if (EXEMPT_PREFIXES.some((prefix) => path.startsWith(prefix))) return next.handle();
+    // An admin sees everyone's full number and email.
+    if (canSeeFullPhoneNumbers(request.user?.role)) return next.handle();
 
-    return next.handle().pipe(map((body) => stripContactDetails(body, request.user?.id ?? null)));
+    const viewerId = request.user?.id ?? null;
+    const canSeeEmails = canSeeContactDetails(request.user?.role);
+    return next.handle().pipe(map((body) => protectContactDetails(body, viewerId, canSeeEmails)));
   }
 }

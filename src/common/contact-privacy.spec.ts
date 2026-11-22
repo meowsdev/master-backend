@@ -1,38 +1,51 @@
 import { BadRequestException } from '@nestjs/common';
-import { assertNoPhoneNumber, canSeeContactDetails, containsPhoneNumber, maskPhoneNumber, stripContactDetails } from './contact-privacy';
+import { assertNoPhoneNumber, canSeeContactDetails, canSeeFullPhoneNumbers, containsPhoneNumber, maskPhoneNumber, protectContactDetails } from './contact-privacy';
 
-describe('stripContactDetails', () => {
+describe('protectContactDetails', () => {
   const order = {
     id: 'o1',
     totalPrice: 2100,
-    customer: { id: 'c1', user: { id: 'u-customer', name: 'Alif', mobileNumber: '01711111111', email: 'a@x.com' } },
+    customer: { id: 'c1', user: { id: 'u-customer', name: 'Alif', mobileNumber: '01711114585', email: 'a@x.com' } },
     provider: { id: 'p1', user: { id: 'u-provider', name: 'Manik', mobileNumber: '01822222222' } },
     technician: null,
   };
 
-  it("removes the other side's number and email, keeps names", () => {
-    const seenByProvider = stripContactDetails(order, 'u-provider');
-    expect(seenByProvider.customer.user).toEqual({ id: 'u-customer', name: 'Alif' });
+  it("masks the other side's number, drops their email, keeps names", () => {
+    const seenByProvider = protectContactDetails(order, 'u-provider');
+    expect(seenByProvider.customer.user).toEqual({ id: 'u-customer', name: 'Alif', mobileNumber: '017****4585', maskedPhone: '017****4585' });
   });
 
-  it("keeps the viewer's own number", () => {
-    const seenByProvider = stripContactDetails(order, 'u-provider');
+  it("keeps the viewer's own number in full", () => {
+    const seenByProvider = protectContactDetails(order, 'u-provider');
     expect(seenByProvider.provider.user.mobileNumber).toBe('01822222222');
   });
 
-  it('removes every number for a guest', () => {
-    const seenByGuest = stripContactDetails([order], null);
-    expect(JSON.stringify(seenByGuest)).not.toMatch(/0171|0182|@x\.com/);
+  it('masks numbers for non-admin staff, but lets them keep emails', () => {
+    const seenByAdmin = protectContactDetails(order, 'u-admin', true);
+    expect(seenByAdmin.customer.user.mobileNumber).toBe('017****4585');
+    expect(seenByAdmin.customer.user.email).toBe('a@x.com');
+  });
+
+  it('never lets a full number or email reach a guest', () => {
+    const seenByGuest = protectContactDetails([order], null);
+    expect(JSON.stringify(seenByGuest)).not.toMatch(/01711114585|01822222222|@x.com/);
   });
 
   it('walks arrays and leaves dates alone', () => {
     const when = new Date();
-    const [first] = stripContactDetails([{ id: 'x', when, user: { id: 'y', mobileNumber: '017' } }], 'z');
+    const [first] = protectContactDetails([{ id: 'x', when, user: { id: 'y', mobileNumber: '01711112222' } }], 'z');
     expect(first.when).toBe(when);
-    expect(first.user).toEqual({ id: 'y' });
+    expect(first.user.mobileNumber).toBe('017****2222');
   });
 
-  it('lets staff see contact details', () => {
+  it('lets only an admin see full numbers', () => {
+    expect(canSeeFullPhoneNumbers('ADMIN')).toBe(true);
+    for (const role of ['MANAGER', 'SUPPORT', 'HR', 'COUNSELOR', 'CUSTOMER', 'PROVIDER', 'TECHNICIAN']) {
+      expect(canSeeFullPhoneNumbers(role)).toBe(false);
+    }
+  });
+
+  it('lets staff see emails', () => {
     expect(canSeeContactDetails('ADMIN')).toBe(true);
     expect(canSeeContactDetails('COUNSELOR')).toBe(true);
     expect(canSeeContactDetails('CUSTOMER')).toBe(false);
@@ -66,21 +79,9 @@ describe('containsPhoneNumber', () => {
   });
 });
 
-describe('masked phone for users without a username', () => {
+describe('maskPhoneNumber', () => {
   it('shows the first three and last four digits of the local number', () => {
     expect(maskPhoneNumber('+8801712345678')).toBe('017****5678');
     expect(maskPhoneNumber('01712344585')).toBe('017****4585');
-  });
-
-  it('adds maskedPhone only when the user has no username', () => {
-    const [noHandle, withHandle] = stripContactDetails(
-      [
-        { id: 'c1', username: null, mobileNumber: '+8801712345678' },
-        { id: 'c2', username: 'rafi', mobileNumber: '+8801812345678' },
-      ],
-      'provider',
-    );
-    expect(noHandle).toEqual({ id: 'c1', username: null, maskedPhone: '017****5678' });
-    expect(withHandle).toEqual({ id: 'c2', username: 'rafi' });
   });
 });
