@@ -26,9 +26,19 @@ export class CustomerRatingService {
     return order;
   }
 
+  /**
+   * The provider side rates the customer once per order: whoever of the provider and the technician goes first.
+   * The other one sees it already done, and by whom.
+   */
   async find(orderId: string, actorId: string) {
     await this.loadOrderForHandler(orderId, actorId);
-    return this.prisma.customerRating.findUnique({ where: { orderId } });
+    const rating = await this.prisma.customerRating.findUnique({ where: { orderId } });
+    if (!rating) return null;
+    const rater = await this.prisma.user.findUnique({ where: { id: rating.ratedById }, select: { name: true, username: true, role: true } });
+    return {
+      ...rating,
+      ratedBy: { name: rater?.name ?? (rater?.username ? `@${rater.username}` : null), role: rater?.role ?? null, isMe: rating.ratedById === actorId },
+    };
   }
 
   async rate(orderId: string, dto: RateCustomerDto, actorId: string) {
@@ -53,7 +63,8 @@ export class CustomerRatingService {
       });
     } catch (error) {
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
-        throw new ConflictException('You already rated this customer');
+        // The provider and the technician share one rating per order: the other one may have sent it first.
+        throw new ConflictException('This customer was already rated for this order');
       }
       throw error;
     }

@@ -49,3 +49,35 @@ describe('CustomerRatingService', () => {
     await expect(service.rate('o1', { rating: 5, comment: 'call 01711111111' }, PROVIDER)).rejects.toBeInstanceOf(BadRequestException);
   });
 });
+
+describe('CustomerRatingService: one rating for the provider side', () => {
+  const TECHNICIAN = 'tech-user';
+
+  function buildTeam() {
+    const tx = {
+      customerRating: { create: jest.fn().mockResolvedValue({ id: 'r1' }), aggregate: jest.fn().mockResolvedValue({ _avg: { rating: 5 } }) },
+      customerProfile: { update: jest.fn() },
+    };
+    const prisma = {
+      order: {
+        findUnique: jest.fn().mockResolvedValue({ id: 'o1', orderStatus: 'COMPLETED', customerId: 'c1', provider: { userId: PROVIDER }, technician: { userId: TECHNICIAN } }),
+      },
+      customerRating: { findUnique: jest.fn().mockResolvedValue({ orderId: 'o1', rating: 5, comment: null, ratedById: TECHNICIAN }) },
+      user: { findUnique: jest.fn().mockResolvedValue({ name: 'Karim', username: null, role: 'TECHNICIAN' }) },
+      $transaction: jest.fn((callback: (client: typeof tx) => unknown) => callback(tx)),
+    };
+    return { service: new CustomerRatingService(prisma as never), tx };
+  }
+
+  it("lets the order's technician rate the customer too", async () => {
+    const { service, tx } = buildTeam();
+    await service.rate('o1', { rating: 5 }, TECHNICIAN);
+    expect(tx.customerRating.create).toHaveBeenCalledWith({ data: expect.objectContaining({ ratedById: TECHNICIAN }) });
+  });
+
+  it('shows the provider that their technician already rated, and by whom', async () => {
+    const { service } = buildTeam();
+    const found = await service.find('o1', PROVIDER);
+    expect(found?.ratedBy).toEqual({ name: 'Karim', role: 'TECHNICIAN', isMe: false });
+  });
+});

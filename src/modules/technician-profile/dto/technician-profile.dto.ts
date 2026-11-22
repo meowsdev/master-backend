@@ -35,6 +35,20 @@ export class AdminCreateTechnicianDto {
   providerAgencyId?: string;
 }
 
+/** A provider adds a technician to their own team. The agency is always the provider themselves. */
+export class ProviderAddTechnicianDto {
+  @ApiProperty({ example: '+8801700000000', description: 'Technician phone number with country code' })
+  @IsString()
+  @IsPhoneNumber()
+  mobileNumber!: string;
+
+  @ApiProperty({ example: 'Rahim Uddin' })
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(100)
+  name!: string;
+}
+
 /** Admin attaches a technician to a provider agency, or detaches with null. */
 export class AssignTechnicianAgencyDto {
   @ApiProperty({

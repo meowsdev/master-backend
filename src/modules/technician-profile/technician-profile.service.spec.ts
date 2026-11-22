@@ -91,3 +91,53 @@ describe('TechnicianProfileService provider check', () => {
     expect(prisma.technicianProfile.update).not.toHaveBeenCalled();
   });
 });
+
+describe('TechnicianProfileService.addToMyTeam (provider)', () => {
+  const dto = { mobileNumber: '+8801700000000', name: '  Rahim  ' };
+
+  function buildTeam(existingUser: unknown) {
+    const tx = {
+      user: { create: jest.fn().mockResolvedValue({ id: 'new-user' }) },
+      technicianProfile: { create: jest.fn().mockResolvedValue({ id: 'profile-1' }), update: jest.fn().mockResolvedValue({ id: 'profile-old' }) },
+    };
+    const prisma = {
+      providerProfile: { findUnique: jest.fn().mockResolvedValue({ id: 'my-agency' }) },
+      user: { findFirst: jest.fn().mockResolvedValue(existingUser) },
+      $transaction: jest.fn((run) => run(tx)),
+    };
+    return { service: new TechnicianProfileService(prisma as never), tx, prisma };
+  }
+
+  it('creates a technician under the signed-in provider only', async () => {
+    const { service, tx } = buildTeam(null);
+    await service.addToMyTeam('provider-user', dto);
+    expect(tx.user.create).toHaveBeenCalledWith({ data: expect.objectContaining({ name: 'Rahim', role: UserRole.TECHNICIAN }) });
+    expect(tx.technicianProfile.create).toHaveBeenCalledWith({ data: expect.objectContaining({ userId: 'new-user', providerAgencyId: 'my-agency' }) });
+  });
+
+  it('finds the number however it was stored', async () => {
+    const { service, prisma } = buildTeam(null);
+    await service.addToMyTeam('provider-user', dto);
+    expect(prisma.user.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { mobileNumber: { in: ['+8801700000000', '8801700000000', '01700000000'] } } }),
+    );
+  });
+
+  it('takes in a technician who has no provider yet', async () => {
+    const { service, tx } = buildTeam({ id: 'u1', role: UserRole.TECHNICIAN, technicianProfile: { id: 'profile-old', providerAgencyId: null } });
+    await service.addToMyTeam('provider-user', dto);
+    expect(tx.technicianProfile.update).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 'profile-old' }, data: expect.objectContaining({ providerAgencyId: 'my-agency' }) }));
+    expect(tx.user.create).not.toHaveBeenCalled();
+  });
+
+  it("never takes another provider's technician", async () => {
+    const { service, tx } = buildTeam({ id: 'u1', role: UserRole.TECHNICIAN, technicianProfile: { id: 'p', providerAgencyId: 'other-agency' } });
+    await expect(service.addToMyTeam('provider-user', dto)).rejects.toThrow('another provider');
+    expect(tx.technicianProfile.update).not.toHaveBeenCalled();
+  });
+
+  it('refuses a number that has another role', async () => {
+    const { service } = buildTeam({ id: 'u1', role: UserRole.CUSTOMER, technicianProfile: null });
+    await expect(service.addToMyTeam('provider-user', dto)).rejects.toBeInstanceOf(ConflictException);
+  });
+});

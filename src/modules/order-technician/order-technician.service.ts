@@ -1,6 +1,8 @@
-import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { OrderStatus, UserRole, UserStatus } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { USER_EVENT_PUBLISHER } from '../order-dispatch/user-events';
+import type { UserEventPublisher } from '../order-dispatch/user-events';
 
 /** A technician can only be put on an order that a provider has taken and that is not finished. */
 const WORKABLE_STATUSES: OrderStatus[] = [OrderStatus.ACCEPTED, OrderStatus.IN_PROGRESS];
@@ -17,7 +19,12 @@ interface Actor {
  */
 @Injectable()
 export class OrderTechnicianService {
-  constructor(private readonly prisma: PrismaService) {}
+  private readonly logger = new Logger(OrderTechnicianService.name);
+
+  constructor(
+    private readonly prisma: PrismaService,
+    @Inject(USER_EVENT_PUBLISHER) private readonly events: UserEventPublisher,
+  ) {}
 
   /** The technicians that can be chosen for this order, with how many jobs each already has running. */
   async listForOrder(actor: Actor, orderId: string) {
@@ -63,7 +70,33 @@ export class OrderTechnicianService {
     }
 
     await this.prisma.order.update({ where: { id: orderId }, data: { technicianId } });
+    await this.notifyTechnicians(orderId, order.technicianId, technicianId);
     return { orderId, technicianId };
+  }
+
+  /**
+   * Tells the technicians' open apps at once: the new one gets `jobAssigned`, the one taken off (or replaced)
+   * gets `jobUnassigned`. A failure here never undoes the change: their job list still picks it up on its
+   * next refresh.
+   */
+  private async notifyTechnicians(orderId: string, previousId: string | null, nextId: string | null) {
+    if (previousId === nextId) return;
+    try {
+      const ids = [previousId, nextId].filter((id): id is string => Boolean(id));
+      const [order, technicians] = await Promise.all([
+        this.prisma.order.findUnique({ where: { id: orderId }, select: { referenceCode: true, service: { select: { name: true } } } }),
+        this.prisma.technicianProfile.findMany({ where: { id: { in: ids } }, select: { id: true, userId: true } }),
+      ]);
+      const payload = { orderId, referenceCode: order?.referenceCode ?? null, serviceName: order?.service?.name ?? null };
+      const userOf = (id: string | null) => technicians.find((technician) => technician.id === id)?.userId;
+
+      const nextUserId = userOf(nextId);
+      if (nextUserId) this.events.publishToUser(nextUserId, 'jobAssigned', payload);
+      const previousUserId = userOf(previousId);
+      if (previousUserId) this.events.publishToUser(previousUserId, 'jobUnassigned', payload);
+    } catch (error) {
+      this.logger.warn(`Could not notify technicians about order ${orderId}: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 
   /** The order must exist and the actor must be its provider (or an admin). Everyone else is turned away. */

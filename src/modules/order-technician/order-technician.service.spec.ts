@@ -12,8 +12,47 @@ function build(options: { order?: Partial<typeof order> | null; technician?: unk
       findMany: jest.fn().mockResolvedValue([{ id: 't1', user: { name: 'Karim', username: null, profilePhoto: null, status: 'ACTIVE' }, _count: { orders: 2 } }]),
     },
   };
-  return { service: new OrderTechnicianService(prisma as never), prisma };
+  const events = { publishToUser: jest.fn() };
+  return { service: new OrderTechnicianService(prisma as never, events), prisma, events };
 }
+
+describe('OrderTechnicianService tells the technicians at once', () => {
+  const people = [{ id: 't1', userId: 'tech-1-user' }, { id: 't2', userId: 'tech-2-user' }];
+
+  it('sends jobAssigned to the technician put on the order', async () => {
+    const { service, prisma, events } = build();
+    prisma.technicianProfile.findMany.mockResolvedValue(people);
+    prisma.order.findUnique
+      .mockResolvedValueOnce(order)
+      .mockResolvedValueOnce({ referenceCode: 'A94K2B', service: { name: 'AC Servicing' } });
+    await service.setTechnician(owner, 'o1', 't1');
+    expect(events.publishToUser).toHaveBeenCalledTimes(1);
+    expect(events.publishToUser).toHaveBeenCalledWith('tech-1-user', 'jobAssigned', { orderId: 'o1', referenceCode: 'A94K2B', serviceName: 'AC Servicing' });
+  });
+
+  it('tells the replaced technician the job was taken off them', async () => {
+    const { service, prisma, events } = build({ order: { technicianId: 't1' } as never, technician: { ...ownTechnician, id: 't2' } });
+    prisma.technicianProfile.findMany.mockResolvedValue(people);
+    await service.setTechnician(owner, 'o1', 't2');
+    expect(events.publishToUser).toHaveBeenCalledWith('tech-2-user', 'jobAssigned', expect.anything());
+    expect(events.publishToUser).toHaveBeenCalledWith('tech-1-user', 'jobUnassigned', expect.anything());
+  });
+
+  it('sends nothing when the same technician is saved again', async () => {
+    const { service, events } = build({ order: { technicianId: 't1' } as never });
+    await service.setTechnician(owner, 'o1', 't1');
+    expect(events.publishToUser).not.toHaveBeenCalled();
+  });
+
+  it('never fails the change when the notice cannot be sent', async () => {
+    const { service, prisma, events } = build();
+    prisma.technicianProfile.findMany.mockResolvedValue(people);
+    events.publishToUser.mockImplementation(() => {
+      throw new Error('socket down');
+    });
+    await expect(service.setTechnician(owner, 'o1', 't1')).resolves.toEqual({ orderId: 'o1', technicianId: 't1' });
+  });
+});
 
 const owner = { id: 'provider-user', role: 'PROVIDER' as never };
 const otherProvider = { id: 'someone-else', role: 'PROVIDER' as never };

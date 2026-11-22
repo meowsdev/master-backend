@@ -22,6 +22,7 @@ import { TECHNICIAN_MANAGER_ROLES } from '../auth/role-policy';
 import {
   AdminCreateTechnicianDto,
   AssignTechnicianAgencyDto,
+  ProviderAddTechnicianDto,
   UpdateMyTechnicianLocationDto,
 } from './dto/technician-profile.dto';
 import { TechnicianProfileService } from './technician-profile.service';
@@ -72,6 +73,24 @@ export class TechnicianProfileController {
   @ApiOperation({ summary: 'ADMIN: delete a technician profile' })
   remove(@Param('id', new ParseUUIDPipe()) id: string) {
     return this.technicianProfileService.removeByAdmin(id);
+  }
+
+  // ---- A provider's own team ----
+
+  @Get('my-team')
+  @Roles(UserRole.PROVIDER)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'PROVIDER: list my own technicians' })
+  listMyTeam(@Req() req: AuthenticatedRequest) {
+    return this.technicianProfileService.listMyTeam(req.user.id);
+  }
+
+  @Post('my-team')
+  @Roles(UserRole.PROVIDER)
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({ summary: 'PROVIDER: add a technician to my own team' })
+  addToMyTeam(@Req() req: AuthenticatedRequest, @Body() data: ProviderAddTechnicianDto) {
+    return this.technicianProfileService.addToMyTeam(req.user.id, data);
   }
 
   // ---- A technician looking at / updating themselves ----

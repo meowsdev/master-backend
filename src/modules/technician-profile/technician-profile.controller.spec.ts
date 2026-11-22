@@ -22,13 +22,19 @@ function routes() {
 describe('TechnicianProfileController access rules', () => {
   it('creating, attaching to a provider and deleting a technician require ADMIN', () => {
     const all = routes();
-    const create = all.find((r) => r.method === RequestMethod.POST);
+    const create = all.find((r) => r.method === RequestMethod.POST && r.path !== 'my-team');
     const agency = all.find((r) => r.method === RequestMethod.PATCH && r.path === ':id/agency');
     const remove = all.find((r) => r.method === RequestMethod.DELETE);
 
     expect(create?.roles).toEqual([UserRole.ADMIN]);
     expect(agency?.roles).toEqual([UserRole.ADMIN]);
     expect(remove?.roles).toEqual([UserRole.ADMIN]);
+  });
+
+  it('lets only a PROVIDER read and add to their own team', () => {
+    const team = routes().filter((r) => r.path === 'my-team');
+    expect(team.map((r) => r.method).sort()).toEqual([RequestMethod.GET, RequestMethod.POST].sort());
+    expect(team.every((r) => r.roles?.length === 1 && r.roles[0] === UserRole.PROVIDER)).toBe(true);
   });
 
   it('has no self-service route that can create or move a technician', () => {
