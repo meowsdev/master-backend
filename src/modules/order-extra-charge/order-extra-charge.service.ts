@@ -1,5 +1,5 @@
-import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
-import { ExtraChargeStatus, OrderStatus, UserRole } from '@prisma/client';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { ExtraChargeStatus, OrderStatus, Prisma, UserRole } from '@prisma/client';
 import { assertNoPhoneNumber } from '../../common/contact-privacy';
 import { COMMISSION_RATE } from '../orders/orders.helpers';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -8,6 +8,14 @@ import { isOrderStaff } from '../auth/role-policy';
 import { OPEN_REVISION_STATUSES } from '../service-revision/revision-window';
 
 type Actor = { id: string; role: UserRole };
+type Decision = 'APPROVED' | 'REJECTED';
+
+/**
+ * A customer who has never signed in to the app (an order an admin placed for them) cannot answer an extra
+ * bill, so it is approved automatically after this many minutes; the provider explains it on site. Customers
+ * who use the app always answer themselves. Overridable with EXTRA_CHARGE_AUTO_APPROVE_MINUTES.
+ */
+export const autoApproveMinutes = () => Number(process.env.EXTRA_CHARGE_AUTO_APPROVE_MINUTES) || 30;
 
 /** Per the provider rules, the price may be changed at most twice per order. */
 export const MAX_APPROVED_EXTRA_CHARGES = 2;
@@ -17,13 +25,16 @@ const ORDER_PARTIES_SELECT = {
   orderStatus: true,
   totalPrice: true,
   priceEditCount: true,
-  customer: { select: { userId: true } },
+  // isVerified: false until the customer signs in to the app themselves.
+  customer: { select: { userId: true, user: { select: { isVerified: true } } } },
   provider: { select: { userId: true } },
   technician: { select: { userId: true } },
 } as const;
 
 @Injectable()
 export class OrderExtraChargeService {
+  private readonly logger = new Logger(OrderExtraChargeService.name);
+
   constructor(private readonly prisma: PrismaService) {}
 
   private async loadOrder(orderId: string) {
@@ -60,8 +71,16 @@ export class OrderExtraChargeService {
     const items = dto.items.map(({ label, amount }) => ({ label: label.trim(), amount }));
     const totalAmount = items.reduce((sum, item) => sum + item.amount, 0);
 
+    const isCustomerOffApp = !order.customer.user.isVerified;
     return this.prisma.extraChargeRequest.create({
-      data: { orderId, requestedById: actor.id, items, totalAmount, previousTotal: order.totalPrice },
+      data: {
+        orderId,
+        requestedById: actor.id,
+        items,
+        totalAmount,
+        previousTotal: order.totalPrice,
+        autoApproveAt: isCustomerOffApp ? new Date(Date.now() + autoApproveMinutes() * 60 * 1000) : null,
+      },
     });
   }
 
@@ -75,7 +94,7 @@ export class OrderExtraChargeService {
   }
 
   /** Only the order's customer answers. Approval and the price change happen in one transaction. */
-  async respond(requestId: string, decision: 'APPROVED' | 'REJECTED', actor: Actor) {
+  async respond(requestId: string, decision: Decision, actor: Actor) {
     const request = await this.prisma.extraChargeRequest.findUnique({ where: { id: requestId } });
     if (!request) throw new NotFoundException('Extra-charge request not found');
 
@@ -84,27 +103,60 @@ export class OrderExtraChargeService {
     if (order.orderStatus !== OrderStatus.IN_PROGRESS) throw new BadRequestException('This order is no longer in progress');
 
     return this.prisma.$transaction(async (tx) => {
-      // updateMany with the PENDING guard makes a double tap (or two tabs) apply the charge once.
-      const claimed = await tx.extraChargeRequest.updateMany({
-        where: { id: requestId, status: ExtraChargeStatus.PENDING },
-        data: { status: decision, respondedAt: new Date() },
-      });
-      if (claimed.count === 0) throw new ConflictException('This request was already answered');
-
-      if (decision === 'APPROVED') {
-        await tx.order.update({
-          where: { id: order.id },
-          data: {
-            // The platform's share grows with the job: approved extra work is commissioned like the rest.
-            adminCommission: { increment: Math.round(Number(request.totalAmount) * COMMISSION_RATE) },
-            additionalPrice: { increment: request.totalAmount },
-            totalPrice: { increment: request.totalAmount },
-            dueAmount: { increment: request.totalAmount },
-            priceEditCount: { increment: 1 },
-          },
-        });
-      }
+      await this.applyDecision(tx, request, order.id, decision, false);
       return tx.extraChargeRequest.findUniqueOrThrow({ where: { id: requestId } });
     });
+  }
+
+  /**
+   * Approves every extra bill whose auto-approve time has passed, while its customer still has not signed in
+   * to the app and the work is still in progress. A customer who signed in meanwhile answers it themselves.
+   * The scheduler calls this every minute. Returns how many were approved.
+   */
+  async autoApproveDue(now = new Date()): Promise<number> {
+    const due = await this.prisma.extraChargeRequest.findMany({
+      where: {
+        status: ExtraChargeStatus.PENDING,
+        autoApproveAt: { lte: now },
+        order: { orderStatus: OrderStatus.IN_PROGRESS, customer: { user: { isVerified: false } } },
+      },
+      select: { id: true, orderId: true, totalAmount: true },
+    });
+
+    let approved = 0;
+    for (const request of due) {
+      try {
+        await this.prisma.$transaction((tx) => this.applyDecision(tx, request, request.orderId, 'APPROVED', true));
+        approved += 1;
+      } catch (error) {
+        // Answered a moment ago (by the customer or another tick): nothing to do.
+        if (!(error instanceof ConflictException)) this.logger.warn(`Could not auto-approve extra charge ${request.id}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+    return approved;
+  }
+
+  /** Answers one PENDING request and, when approved, adds it to the bill. Approval and the price change happen together. */
+  private async applyDecision(tx: Prisma.TransactionClient, request: { id: string; totalAmount: Prisma.Decimal | number }, orderId: string, decision: Decision, isAutomatic: boolean) {
+    // updateMany with the PENDING guard makes a double tap (or two tabs, or the timer racing the customer) apply the charge once.
+    const claimed = await tx.extraChargeRequest.updateMany({
+      where: { id: request.id, status: ExtraChargeStatus.PENDING },
+      data: { status: decision, respondedAt: new Date(), isAutoApproved: isAutomatic },
+    });
+    if (claimed.count === 0) throw new ConflictException('This request was already answered');
+
+    if (decision === 'APPROVED') {
+      await tx.order.update({
+        where: { id: orderId },
+        data: {
+          // The platform's share grows with the job: approved extra work is commissioned like the rest.
+          adminCommission: { increment: Math.round(Number(request.totalAmount) * COMMISSION_RATE) },
+          additionalPrice: { increment: request.totalAmount },
+          totalPrice: { increment: request.totalAmount },
+          dueAmount: { increment: request.totalAmount },
+          priceEditCount: { increment: 1 },
+        },
+      });
+    }
   }
 }

@@ -164,16 +164,16 @@ model User {
   refreshTokens         RefreshToken[]
   serviceAssignments    ServiceAssignee[]
   chatParticipants      ChatParticipant[]
-  sentMessages          Message[]          @relation("SentMessages")
+  sentMessages          Message[]            @relation("SentMessages")
   extraChargeRequests   ExtraChargeRequest[] @relation("ExtraChargeRequester")
-  sentChatAuditLogs     ChatAuditLog[]     @relation("ChatAuditSender")
-  customerChatSessions  ChatSession[]      @relation("ChatSessionCustomer")
-  counselorChatSessions ChatSession[]      @relation("ChatSessionCounselor")
-  providerChatSessions  ChatSession[]      @relation("ChatSessionProvider")
-  supportThread         SupportThread?     @relation("SupportThreadMember")
-  sentSupportMessages   SupportMessage[]   @relation("SupportMessageSender")
-  moderationLog         UserModerationLog[] @relation("ModeratedUser")
-  moderationsDone       UserModerationLog[] @relation("ModerationActor")
+  sentChatAuditLogs     ChatAuditLog[]       @relation("ChatAuditSender")
+  customerChatSessions  ChatSession[]        @relation("ChatSessionCustomer")
+  counselorChatSessions ChatSession[]        @relation("ChatSessionCounselor")
+  providerChatSessions  ChatSession[]        @relation("ChatSessionProvider")
+  supportThread         SupportThread?       @relation("SupportThreadMember")
+  sentSupportMessages   SupportMessage[]     @relation("SupportMessageSender")
+  moderationLog         UserModerationLog[]  @relation("ModeratedUser")
+  moderationsDone       UserModerationLog[]  @relation("ModerationActor")
   orderAssignmentsDone  OrderAssignmentLog[] @relation("OrderAssignmentActor")
 
   @@index([mobileNumber, name])
@@ -231,16 +231,16 @@ model ProviderProfile {
   createdAt            DateTime      @default(now())
   updatedAt            DateTime      @updatedAt
 
-  user               User                @relation(fields: [userId], references: [id], onDelete: Cascade)
-  kyc                ProviderKyc?
-  technicianProfiles TechnicianProfile[] @relation("ProviderAgencyTechnicians")
-  activeChatSlots    ActiveChatSlot[]
-  orders             Order[]
-  orderOffers        OrderOffer[]
-  serviceAreas       ProviderServiceArea[]
+  user                User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  kyc                 ProviderKyc?
+  technicianProfiles  TechnicianProfile[]   @relation("ProviderAgencyTechnicians")
+  activeChatSlots     ActiveChatSlot[]
+  orders              Order[]
+  orderOffers         OrderOffer[]
+  serviceAreas        ProviderServiceArea[]
   assignmentsReceived OrderAssignmentLog[]
-  providerReviews    ProviderReview[]
-  customerRetentions CustomerRetention[]
+  providerReviews     ProviderReview[]
+  customerRetentions  CustomerRetention[]
 }
 
 model CounselorProfile {
@@ -557,21 +557,21 @@ model Order {
   createdAt       DateTime      @default(now())
   updatedAt       DateTime      @updatedAt
 
-  provider       ProviderProfile     @relation(fields: [providerId], references: [id], onDelete: Restrict)
-  customer       CustomerProfile     @relation(fields: [customerId], references: [id], onDelete: Restrict)
-  technician     TechnicianProfile?  @relation(fields: [technicianId], references: [id], onDelete: SetNull)
-  service        Service             @relation(fields: [serviceId], references: [id], onDelete: Restrict)
-  paymentAndTip  OrderPaymentAndTip?
-  revisions      ServiceRevision[]
-  providerReview ProviderReview?
-  bookingDetail  OrderBookingDetail?
-  items          OrderItem[]
-  messages       Message[]
-  extraCharges   ExtraChargeRequest[]
-  customerRating CustomerRating?
+  provider        ProviderProfile       @relation(fields: [providerId], references: [id], onDelete: Restrict)
+  customer        CustomerProfile       @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  technician      TechnicianProfile?    @relation(fields: [technicianId], references: [id], onDelete: SetNull)
+  service         Service               @relation(fields: [serviceId], references: [id], onDelete: Restrict)
+  paymentAndTip   OrderPaymentAndTip?
+  revisions       ServiceRevision[]
+  providerReview  ProviderReview?
+  bookingDetail   OrderBookingDetail?
+  items           OrderItem[]
+  messages        Message[]
+  extraCharges    ExtraChargeRequest[]
+  customerRating  CustomerRating?
   advancePayments OrderAdvancePayment[]
-  offers         OrderOffer[]
-  assignmentLog  OrderAssignmentLog[]
+  offers          OrderOffer[]
+  assignmentLog   OrderAssignmentLog[]
 
   @@index([providerId])
   @@index([customerId])
@@ -747,22 +747,28 @@ enum ExtraChargeStatus {
 
 /// Extra work found on site. Sits outside the order price until the customer approves it.
 model ExtraChargeRequest {
-  id            String            @id @default(uuid())
-  orderId       String
-  requestedById String
+  id             String            @id @default(uuid())
+  orderId        String
+  requestedById  String
   /// [{ label, amount }] frozen at request time.
-  items         Json
-  totalAmount   Decimal           @db.Decimal(10, 2)
+  items          Json
+  totalAmount    Decimal           @db.Decimal(10, 2)
   /// Order total when the request was made, so the card can show "previous + new = new total".
-  previousTotal Decimal           @db.Decimal(10, 2)
-  status        ExtraChargeStatus @default(PENDING)
-  respondedAt   DateTime?
-  createdAt     DateTime          @default(now())
+  previousTotal  Decimal           @db.Decimal(10, 2)
+  status         ExtraChargeStatus @default(PENDING)
+  respondedAt    DateTime?
+  /// Set when the customer has never signed in to the app (e.g. an order an admin placed for them):
+  /// still unanswered at this time, the request is approved automatically. Null = the customer answers.
+  autoApproveAt  DateTime?
+  /// True when the approval came from that timer, not from the customer.
+  isAutoApproved Boolean           @default(false)
+  createdAt      DateTime          @default(now())
 
   order       Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
   requestedBy User  @relation("ExtraChargeRequester", fields: [requestedById], references: [id], onDelete: Restrict)
 
   @@index([orderId])
+  @@index([status, autoApproveAt])
 }
 
 /// The provider's rating of the customer once an order is done. One per order, never edited.
@@ -784,15 +790,15 @@ model CustomerRating {
 /// Money the customer paid before the final settlement (before the work starts or in the middle of it).
 /// The final payment is the order's due, so these amounts are already subtracted from it.
 model OrderAdvancePayment {
-  id            String      @id @default(uuid())
-  orderId       String
-  amount        Decimal     @db.Decimal(10, 2)
-  method        PaymentMode
-  transactionId String
+  id             String      @id @default(uuid())
+  orderId        String
+  amount         Decimal     @db.Decimal(10, 2)
+  method         PaymentMode
+  transactionId  String
   /// The bill and what was still due right after this payment, so the receipt stays true if the bill changes later.
-  totalAtPayment Decimal? @db.Decimal(10, 2)
-  dueAfter       Decimal? @db.Decimal(10, 2)
-  createdAt     DateTime    @default(now())
+  totalAtPayment Decimal?    @db.Decimal(10, 2)
+  dueAfter       Decimal?    @db.Decimal(10, 2)
+  createdAt      DateTime    @default(now())
 
   order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
 
@@ -830,13 +836,13 @@ model OrderOffer {
 /// The one direct chat between the platform staff (admin, manager, support) and a provider or a customer.
 /// Staff share it, so any of them continues the same history. Unlike ChatSession it needs no service or order.
 model SupportThread {
-  id               String           @id @default(uuid())
-  memberId         String           @unique
+  id               String    @id @default(uuid())
+  memberId         String    @unique
   /// Messages the member wrote after this moment are unread for staff, and the other way round.
   lastStaffReadAt  DateTime?
   lastMemberReadAt DateTime?
-  createdAt        DateTime         @default(now())
-  updatedAt        DateTime         @updatedAt
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
 
   member   User             @relation("SupportThreadMember", fields: [memberId], references: [id], onDelete: Cascade)
   messages SupportMessage[]

@@ -41,3 +41,57 @@ describe('OrderExtraChargeService.respond', () => {
     expect(tx.order.update).not.toHaveBeenCalled();
   });
 });
+
+describe('extra bill for a customer who does not use the app', () => {
+  const NOW = new Date('2026-11-22T10:00:00.000Z');
+  beforeEach(() => { jest.useFakeTimers().setSystemTime(NOW); });
+  afterEach(() => jest.useRealTimers());
+
+  function buildRequest(isVerified: boolean) {
+    const order = { id: 'o1', orderStatus: 'IN_PROGRESS', totalPrice: 2100, priceEditCount: 0, customer: { userId: CUSTOMER.id, user: { isVerified } }, provider: { userId: 'provider-user' }, technician: null };
+    const prisma = {
+      order: { findUnique: jest.fn().mockResolvedValue(order) },
+      serviceRevision: { count: jest.fn().mockResolvedValue(0) },
+      orderPaymentAndTip: { findUnique: jest.fn().mockResolvedValue(null) },
+      extraChargeRequest: { findFirst: jest.fn().mockResolvedValue(null), create: jest.fn().mockImplementation(({ data }) => Promise.resolve(data)) },
+    };
+    return { service: new OrderExtraChargeService(prisma as never), prisma };
+  }
+  const dto = { items: [{ label: 'Gas refill', amount: 1600 }] };
+  const provider = { id: 'provider-user', role: 'PROVIDER' as const };
+
+  it('is set to approve itself after 30 minutes when the customer never signed in', async () => {
+    const { service } = buildRequest(false);
+    const created = await service.request('o1', dto, provider);
+    expect(created.autoApproveAt).toEqual(new Date(NOW.getTime() + 30 * 60 * 1000));
+  });
+
+  it('waits for the customer when they use the app', async () => {
+    const { service } = buildRequest(true);
+    const created = await service.request('o1', dto, provider);
+    expect(created.autoApproveAt).toBeNull();
+  });
+
+  it('the timer approves only due requests of app-less customers, marks them automatic and bills them once', async () => {
+    const { service, tx } = build();
+    const prisma = (service as unknown as { prisma: { extraChargeRequest: { findMany: jest.Mock } } }).prisma;
+    prisma.extraChargeRequest.findMany = jest.fn().mockResolvedValue([{ id: 'r1', orderId: 'o1', totalAmount: 1600 }]);
+
+    await expect(service.autoApproveDue(NOW)).resolves.toBe(1);
+    expect(prisma.extraChargeRequest.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ status: 'PENDING', autoApproveAt: { lte: NOW }, order: { orderStatus: 'IN_PROGRESS', customer: { user: { isVerified: false } } } }),
+    }));
+    expect(tx.extraChargeRequest.updateMany).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: 'APPROVED', isAutoApproved: true }) }));
+    expect(tx.order.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ totalPrice: { increment: 1600 } }) }));
+  });
+
+  it('skips a request the customer answered a moment earlier', async () => {
+    const { service, tx } = build();
+    const prisma = (service as unknown as { prisma: { extraChargeRequest: { findMany: jest.Mock } } }).prisma;
+    prisma.extraChargeRequest.findMany = jest.fn().mockResolvedValue([{ id: 'r1', orderId: 'o1', totalAmount: 1600 }]);
+    tx.extraChargeRequest.updateMany.mockResolvedValue({ count: 0 });
+
+    await expect(service.autoApproveDue(NOW)).resolves.toBe(0);
+    expect(tx.order.update).not.toHaveBeenCalled();
+  });
+});
