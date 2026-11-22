@@ -27,8 +27,9 @@ export class OrderDispatchService {
   ) {}
 
   /**
-   * Providers who may be offered this order: they enabled the service as a skill, are available, are not
-   * blocked by a negative wallet, are not the customer themselves, and were not offered it before.
+   * Providers who may be offered this order: they enabled the service as a skill, are active and available
+   * (a negative wallet does not count against them: they are offered it but must clear the due before
+   * accepting), are not the customer themselves, and were not offered it before.
    * Better rated and more experienced providers are asked first. A provider with no skills never appears.
    *
    * Where the work is done decides who is asked: providers who cover the order's upazila first and, once
@@ -53,8 +54,9 @@ export class OrderDispatchService {
     const providers = await client.providerProfile.findMany({
       where: {
         ...areaFilter,
-        isAvailable: true,
-        isBlockedForNegative: false,
+        // A negative wallet still gets the offer (and its notification); accepting waits until the due is
+        // cleared (assertProvider). Such a provider is marked unavailable only because of the wallet.
+        OR: [{ isAvailable: true }, { isBlockedForNegative: true }],
         ...(alreadyOfferedIds.length > 0 ? { id: { notIn: alreadyOfferedIds } } : {}),
         user: {
           role: UserRole.PROVIDER,

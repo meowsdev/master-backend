@@ -30,11 +30,13 @@ describe('OrderDispatchService', () => {
   afterEach(() => jest.useRealTimers());
 
   describe('who is eligible', () => {
-    it('asks only providers with the skill who are free, unblocked and not the customer', async () => {
+    it('asks only active providers with the skill who are free (or only held back by a negative wallet) and not the customer', async () => {
       const { service, tx } = build();
       await service.dispatchNextWave('o1');
       const where = tx.providerProfile.findMany.mock.calls[0][0].where;
-      expect(where).toMatchObject({ isAvailable: true, isBlockedForNegative: false });
+      // A negative wallet still gets the offer; accepting is what waits for the due to be paid.
+      expect(where.OR).toEqual([{ isAvailable: true }, { isBlockedForNegative: true }]);
+      expect(where).not.toHaveProperty('isBlockedForNegative');
       expect(where.user).toMatchObject({ role: 'PROVIDER', status: 'ACTIVE', id: { not: 'customer-user' }, serviceAssignments: { some: { serviceId: 's1', isActive: true } } });
     });
 

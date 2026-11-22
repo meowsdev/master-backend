@@ -155,9 +155,11 @@ export async function assertProvider(prisma: any, providerId: string) {
     throw new BadRequestException('Provider profile not found');
   }
 
-  if (Number(provider.walletBalance) < 0) {
+  const balance = Number(provider.walletBalance);
+  if (balance < 0) {
+    // The provider still sees new orders; they take one once the previous due is paid.
     throw new BadRequestException(
-      `Provider has a negative wallet balance (${provider.walletBalance.toString()} BDT). Account is locked from accepting new orders until wallet is recharged.`,
+      `Please clear your previous due of ৳${Math.ceil(-balance)} first, then you can accept new orders.`,
     );
   }
 }

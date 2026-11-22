@@ -483,6 +483,8 @@ export class AuthService {
       data: {
         walletBalance: newBalance,
         isBlockedForNegative,
+        // Same rule as paying the due: a cleared wallet makes the provider available again.
+        isAvailable: !isBlockedForNegative,
       },
     });
 
