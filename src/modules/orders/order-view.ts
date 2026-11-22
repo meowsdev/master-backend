@@ -127,8 +127,33 @@ const addOrderView = <T extends object>(order: T) => {
     revisionDeadline: revisionDeadline(source)?.toISOString() ?? null,
     /** False when the customer has not verified their number by OTP: the provider can only take cash. */
     canPayOnline: customerCanPayOnline(order as Parameters<typeof customerCanPayOnline>[0]),
+    ...customServiceView(order as CustomServiceSource),
   };
 };
+
+interface CustomServiceSource {
+  bookingDetail?: { customServiceName?: string | null; subServiceName?: string | null } | null;
+  service?: { name?: string; nameBn?: string | null; category?: { name?: string } | null } | null;
+}
+
+/**
+ * An admin's custom order hangs off one hidden service; the names the admin typed are on its booking detail.
+ * Every order screen reads `service.name` / `service.category.name`, so those carry the typed names here.
+ */
+function customServiceView(order: CustomServiceSource) {
+  const detail = order.bookingDetail;
+  if (!detail?.customServiceName) return { isCustomService: false };
+  const subName = detail.subServiceName ?? order.service?.name ?? '';
+  return {
+    isCustomService: true,
+    service: {
+      ...order.service,
+      name: subName,
+      nameBn: subName,
+      category: { ...order.service?.category, name: detail.customServiceName },
+    },
+  };
+}
 
 /** Unknown (the customer was not loaded) counts as yes; the completion endpoint checks again. */
 const customerCanPayOnline = (order: { customer?: { user?: { isVerified?: boolean | null } | null } | null }) =>

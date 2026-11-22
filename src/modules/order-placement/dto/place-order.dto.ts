@@ -4,11 +4,13 @@ import {
   ArrayMaxSize,
   IsArray,
   IsInt,
+  IsNotEmpty,
   IsOptional,
   IsPhoneNumber,
   IsString,
   IsUUID,
   Matches,
+  Max,
   MaxLength,
   Min,
   ValidateNested,
@@ -107,4 +109,69 @@ export class AdminPlaceOrderDto extends PlaceOrderDto {
   @IsString()
   @MaxLength(100)
   customerName?: string;
+}
+
+/** Bounds for a custom order's price, in BDT: stops a typo like 250000 instead of 2500. */
+export const MIN_CUSTOM_ORDER_PRICE = 1;
+export const MAX_CUSTOM_ORDER_PRICE = 200000;
+
+/**
+ * An admin's order for a service that is not in the catalog: the admin types the main service, the sub-service,
+ * the details and the price. Everything else (customer, place, time) is the same as any admin order.
+ */
+export class AdminCustomOrderDto {
+  @ApiProperty({ example: '+8801712345678', description: 'The customer; created as a customer account if the number is new' })
+  @IsPhoneNumber()
+  customerPhone!: string;
+
+  @ApiPropertyOptional({ maxLength: 100 })
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  customerName?: string;
+
+  @ApiProperty({ example: 'Generator', maxLength: 100 })
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(100)
+  mainServiceName!: string;
+
+  @ApiProperty({ example: 'Generator servicing', maxLength: 200 })
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(200)
+  subServiceName!: string;
+
+  @ApiPropertyOptional({ maxLength: 1000 })
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  description?: string;
+
+  @ApiProperty({ example: 2500, minimum: MIN_CUSTOM_ORDER_PRICE, maximum: MAX_CUSTOM_ORDER_PRICE })
+  @IsInt()
+  @Min(MIN_CUSTOM_ORDER_PRICE)
+  @Max(MAX_CUSTOM_ORDER_PRICE)
+  price!: number;
+
+  @ApiProperty()
+  @IsInt()
+  districtId!: number;
+
+  @ApiProperty()
+  @IsInt()
+  upazilaId!: number;
+
+  @ApiProperty({ maxLength: 300 })
+  @IsString()
+  @MaxLength(300)
+  addressDetail!: string;
+
+  @ApiProperty({ example: '2026-11-20' })
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'scheduledDate must be YYYY-MM-DD' })
+  scheduledDate!: string;
+
+  @ApiProperty({ example: '09:00 AM - 11:00 AM' })
+  @IsString()
+  timeSlot!: string;
 }

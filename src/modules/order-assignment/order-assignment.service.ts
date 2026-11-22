@@ -63,7 +63,7 @@ export class OrderAssignmentService {
     });
 
     const rows = providers.map(({ serviceAreas, orderOffers, rating, ...provider }) => {
-      const blockedReason = this.blockedReason(provider, order.customerUserId);
+      const blockedReason = this.blockedReason(provider, order.customerUserId, order.isCustomService);
       const location = order.location;
       return {
         ...provider,
@@ -98,7 +98,7 @@ export class OrderAssignmentService {
         },
       });
       if (!provider) throw new NotFoundException('Provider not found');
-      const reason = this.blockedReason(provider, order.customerUserId);
+      const reason = this.blockedReason(provider, order.customerUserId, order.isCustomService);
       if (reason) throw new BadRequestException(`This provider cannot be given the order: ${reason}`);
 
       const expiresAt = new Date(Date.now() + adminOfferMinutes() * 60 * 1000);
@@ -136,13 +136,13 @@ export class OrderAssignmentService {
   }
 
   /** Same reasons automatic dispatch would skip a provider for. `null` means they may receive the order. */
-  private blockedReason(provider: ProviderRow, customerUserId: string): string | null {
+  private blockedReason(provider: ProviderRow, customerUserId: string, isCustomService = false): string | null {
     if (provider.user.id === customerUserId) return 'This is the customer themselves';
     if (provider.user.status !== UserStatus.ACTIVE) return provider.user.status === UserStatus.BANNED ? 'Banned' : 'Blocked or inactive';
     if (provider.user.isRestricted) return 'Restricted from new orders';
     if (provider.isBlockedForNegative) return 'Wallet is negative';
     if (!provider.isAvailable) return 'Not available for orders';
-    if (provider.user.serviceAssignments.length === 0) return 'Does not offer this service';
+    if (!isCustomService && provider.user.serviceAssignments.length === 0) return 'Does not offer this service';
     return null;
   }
 
@@ -155,17 +155,21 @@ export class OrderAssignmentService {
         serviceId: true,
         service: { select: { name: true } },
         customer: { select: { userId: true } },
-        bookingDetail: { select: { districtId: true, upazilaId: true } },
+        bookingDetail: { select: { districtId: true, upazilaId: true, customServiceName: true, subServiceName: true } },
       },
     });
     if (!order) throw new NotFoundException('Order not found');
+    const detail = order.bookingDetail;
     return {
       referenceCode: order.referenceCode,
       orderStatus: order.orderStatus,
       serviceId: order.serviceId,
-      serviceName: order.service.name,
+      // An admin's custom order is named by what the admin typed, not by the hidden service it hangs off.
+      serviceName: detail?.customServiceName ? `${detail.customServiceName}: ${detail.subServiceName}` : order.service.name,
+      // Nobody has a custom service switched on, so any available provider may take it.
+      isCustomService: Boolean(detail?.customServiceName),
       customerUserId: order.customer.userId,
-      location: order.bookingDetail,
+      location: detail ? { districtId: detail.districtId, upazilaId: detail.upazilaId } : null,
     };
   }
 

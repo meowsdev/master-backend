@@ -707,6 +707,9 @@ model OrderBookingDetail {
   orderId        String   @unique
   subServiceId   String?
   subServiceName String   @db.VarChar(200)
+  /// Set only on an admin's custom order: the main service the admin typed (subServiceName holds the typed
+  /// sub-service). Such an order hangs off the hidden custom service (order-placement/custom-service.ts).
+  customServiceName String? @db.VarChar(100)
   quantity       Int      @default(1)
   description    String?  @db.Text
   districtId     Int

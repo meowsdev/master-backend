@@ -12,6 +12,7 @@ import { assertCanManageTechnicians, isOrderStaff } from '../auth/role-policy';
 import { createWithUniqueReference } from './order-reference';
 import { acceptanceStamp, completionStamp } from './order-view';
 import { CreateCustomOrderDto } from './dto/create-custom-order.dto';
+import { isCustomServiceId } from '../order-placement/custom-service';
 import {
   UpdateOrderDto,
   UpdateOrderStatusDto,
@@ -43,7 +44,8 @@ export class OrdersService {
     // A customer (or anyone else) can't choose the technician; only an admin assigns one.
     if (data.technicianId !== undefined) assertCanManageTechnicians(user?.role);
 
-    await assertService(this.prisma, data.serviceId);
+    // An admin's custom order hangs off the hidden (inactive) custom service on purpose.
+    if (!(await isCustomServiceId(this.prisma, data.serviceId))) await assertService(this.prisma, data.serviceId);
 
     // 1. Resolve Customer ID from input or authenticated session
     let customerId = data.customerId;

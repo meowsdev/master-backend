@@ -1,16 +1,19 @@
 import { BadRequestException, ConflictException, ForbiddenException } from '@nestjs/common';
 import { OrderDispatchService } from './order-dispatch.service';
+import { CUSTOM_SERVICE_SLUG, resetCustomServiceCache } from '../order-placement/custom-service';
 
 const NOW = new Date('2027-01-01T00:00:00Z');
 const later = (seconds: number) => new Date(NOW.getTime() + seconds * 1000);
 
 interface Offer { providerId: string; wave: number; status: string; expiresAt: Date }
 
-function build(options: { orderStatus?: string; offers?: Offer[]; eligible?: string[]; location?: { districtId: number; upazilaId: number } | null } = {}) {
+function build(options: { orderStatus?: string; offers?: Offer[]; eligible?: string[]; location?: { districtId: number; upazilaId: number } | null; isCustomService?: boolean } = {}) {
   const order = { orderStatus: options.orderStatus ?? 'PENDING', serviceId: 's1', customer: { userId: 'customer-user' }, bookingDetail: options.location ?? null, offers: options.offers ?? [] };
   const tx = {
     $queryRaw: jest.fn(),
     order: { findUnique: jest.fn().mockResolvedValue(order) },
+    // The order's service: a catalog one, or the hidden custom service an admin's typed order hangs off.
+    service: { findUnique: jest.fn().mockResolvedValue({ slug: options.isCustomService ? CUSTOM_SERVICE_SLUG : 'ac-servicing' }) },
     providerProfile: { findMany: jest.fn().mockResolvedValue((options.eligible ?? ['p1', 'p2', 'p3']).map((id) => ({ id }))) },
     orderOffer: { createMany: jest.fn(), updateMany: jest.fn() },
   };
@@ -26,10 +29,22 @@ function build(options: { orderStatus?: string; offers?: Offer[]; eligible?: str
 }
 
 describe('OrderDispatchService', () => {
-  beforeEach(() => { jest.useFakeTimers().setSystemTime(NOW); });
+  beforeEach(() => {
+    jest.useFakeTimers().setSystemTime(NOW);
+    resetCustomServiceCache();
+  });
   afterEach(() => jest.useRealTimers());
 
   describe('who is eligible', () => {
+    it("offers an admin's custom order to every available provider, whatever services they have on", async () => {
+      const { service, tx } = build({ isCustomService: true });
+      await service.dispatchNextWave('o1');
+      const where = tx.providerProfile.findMany.mock.calls[0][0].where;
+      expect(where.user).not.toHaveProperty('serviceAssignments');
+      // Everything else about who may be asked stays the same.
+      expect(where.user).toMatchObject({ role: 'PROVIDER', status: 'ACTIVE', isRestricted: false, id: { not: 'customer-user' } });
+    });
+
     it('asks only active providers with the skill who are free (or only held back by a negative wallet) and not the customer', async () => {
       const { service, tx } = build();
       await service.dispatchNextWave('o1');

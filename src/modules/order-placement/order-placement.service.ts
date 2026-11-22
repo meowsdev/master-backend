@@ -5,7 +5,8 @@ import { Prisma, PriceUnit, UserRole } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { LocationsService } from '../locations/locations.service';
 import { OrdersService } from '../orders/orders.service';
-import { AdminPlaceOrderDto, PlaceOrderDto, QuoteOrderDto } from './dto/place-order.dto';
+import { AdminCustomOrderDto, AdminPlaceOrderDto, PlaceOrderDto, QuoteOrderDto } from './dto/place-order.dto';
+import { ensureCustomService } from './custom-service';
 import { calculateQuote, PricedAnswer } from './order-pricing';
 import { assertValidSchedule, TIME_SLOTS } from './order-schedule';
 
@@ -90,8 +91,78 @@ export class OrderPlacementService {
    */
   async placeOrderForCustomer(dto: AdminPlaceOrderDto) {
     const { customerPhone, customerName, ...order } = dto;
+    const customerId = await this.resolveCustomerForAdmin(customerPhone, customerName);
+    return this.placeOrder(order, { id: customerId, role: UserRole.CUSTOMER });
+  }
 
-    // Found however the number was stored (+880..., 880..., 01...), so no second account is made next to theirs.
+  /**
+   * An admin books a service that is not in the catalog: they type the main service, the sub-service, the
+   * details and the price. The order hangs off the hidden custom service, keeps the typed names on its booking
+   * detail (every order screen shows those), and is offered to every available provider in the area.
+   */
+  async placeCustomOrderForCustomer(dto: AdminCustomOrderDto) {
+    const mainServiceName = dto.mainServiceName.trim();
+    const subServiceName = dto.subServiceName.trim();
+    if (!mainServiceName || !subServiceName) throw new BadRequestException('Write the main service and the sub-service');
+    // Providers read all of these, so none may carry a phone number.
+    [mainServiceName, subServiceName, dto.description].forEach((text) => assertNoPhoneNumber(text));
+    if (!this.locations.isValidLocation(dto.districtId, dto.upazilaId)) {
+      throw new BadRequestException('Please choose a valid district and upazila');
+    }
+    assertValidSchedule(dto.scheduledDate, dto.timeSlot);
+
+    const customerId = await this.resolveCustomerForAdmin(dto.customerPhone, dto.customerName);
+    const serviceId = await ensureCustomService(this.prisma);
+    const location = { districtId: dto.districtId, upazilaId: dto.upazilaId };
+    const order = await this.orders.create({ serviceId, originalPrice: dto.price }, { id: customerId, role: UserRole.CUSTOMER }, location);
+
+    const priceLine = { label: subServiceName, unitPrice: dto.price, count: 1, amount: dto.price };
+    try {
+      await this.prisma.$transaction([
+        this.prisma.orderItem.create({
+          data: {
+            orderId: order.id,
+            subServiceId: serviceId,
+            nameSnapshot: subServiceName.slice(0, 100),
+            unitPriceSnapshot: dto.price,
+            priceUnitSnapshot: PriceUnit.FIXED,
+            quantity: 1,
+            lineTotal: dto.price,
+          },
+        }),
+        this.prisma.orderBookingDetail.create({
+          data: {
+            orderId: order.id,
+            subServiceId: serviceId,
+            subServiceName,
+            customServiceName: mainServiceName,
+            quantity: 1,
+            description: dto.description?.trim() || null,
+            districtId: dto.districtId,
+            upazilaId: dto.upazilaId,
+            addressDetail: dto.addressDetail.trim(),
+            scheduledDate: new Date(`${dto.scheduledDate}T00:00:00.000Z`),
+            timeSlot: dto.timeSlot,
+            imageUrls: [],
+            priceBreakdown: [priceLine] as unknown as Prisma.InputJsonValue,
+          },
+        }),
+      ]);
+    } catch (error) {
+      // Never leave a priced order behind without the details the provider needs.
+      await this.prisma.order.delete({ where: { id: order.id } });
+      throw error;
+    }
+
+    await this.rememberAddress(customerId, dto);
+    return { order, quote: { lines: [priceLine], total: dto.price } };
+  }
+
+  /**
+   * The customer an admin books for. The number is their identity: an existing customer is reused (found
+   * however the number was stored: +880..., 880..., 01...), a new number becomes a customer account.
+   */
+  private async resolveCustomerForAdmin(customerPhone: string, customerName?: string) {
     const customer = await this.findUserByPhone(customerPhone);
     if (customer && customer.role !== UserRole.CUSTOMER) {
       throw new BadRequestException(`This number belongs to a ${customer.role.toLowerCase()}, not a customer`);
@@ -99,16 +170,12 @@ export class OrderPlacementService {
     if (customer && customer.status !== 'ACTIVE') {
       throw new BadRequestException('This customer is blocked or banned and cannot be ordered for');
     }
-    const customerId =
-      customer?.id ??
-      (
-        await this.prisma.user.create({
-          data: { mobileNumber: customerPhone, name: customerName?.trim() || null, role: UserRole.CUSTOMER, status: 'ACTIVE' },
-          select: { id: true },
-        })
-      ).id;
-
-    return this.placeOrder(order, { id: customerId, role: UserRole.CUSTOMER });
+    if (customer) return customer.id;
+    const created = await this.prisma.user.create({
+      data: { mobileNumber: customerPhone, name: customerName?.trim() || null, role: UserRole.CUSTOMER, status: 'ACTIVE' },
+      select: { id: true },
+    });
+    return created.id;
   }
 
   /**
@@ -219,7 +286,7 @@ export class OrderPlacementService {
    * address), so the next Place Order form starts filled in. The order is already placed, so a failure
    * here is only logged: the customer just types the address again next time.
    */
-  private async rememberAddress(userId: string, dto: PlaceOrderDto) {
+  private async rememberAddress(userId: string, dto: Pick<PlaceOrderDto, 'districtId' | 'upazilaId' | 'addressDetail'>) {
     const addressText = dto.addressDetail.trim();
     try {
       await this.prisma.$transaction(async (tx) => {

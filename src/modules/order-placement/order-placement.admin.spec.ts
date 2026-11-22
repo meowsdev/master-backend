@@ -1,6 +1,7 @@
 import { BadRequestException } from '@nestjs/common';
 import { AdminPlaceOrderDto } from './dto/place-order.dto';
 import { OrderPlacementService } from './order-placement.service';
+import { resetCustomServiceCache } from './custom-service';
 
 const dto = { customerPhone: '+8801712345678', customerName: ' Rafi ', serviceId: 's1', districtId: 1, upazilaId: 1, addressDetail: 'x', scheduledDate: '2030-01-01', timeSlot: '10:00' } as AdminPlaceOrderDto;
 
@@ -79,3 +80,56 @@ describe('OrderPlacementService.lookupCustomer (admin New order form)', () => {
   });
 });
 
+
+describe('OrderPlacementService.placeCustomOrderForCustomer (a service not in the catalog)', () => {
+  const customDto = {
+    customerPhone: '+8801712345678',
+    mainServiceName: ' Generator ',
+    subServiceName: ' Generator servicing ',
+    description: 'Makes a noise',
+    price: 2500,
+    districtId: 1,
+    upazilaId: 9,
+    addressDetail: ' House 1 ',
+    // Tomorrow: bookings open only 30 days ahead.
+    scheduledDate: new Date(Date.now() + 86_400_000).toISOString().slice(0, 10),
+    timeSlot: '09:00 AM - 11:00 AM',
+  };
+
+  function buildCustom() {
+    resetCustomServiceCache();
+    const prisma = {
+      user: { findFirst: jest.fn().mockResolvedValue({ id: 'c1', role: 'CUSTOMER', status: 'ACTIVE' }) },
+      serviceCategory: { upsert: jest.fn().mockResolvedValue({ id: 'custom-cat' }) },
+      service: { findFirst: jest.fn().mockResolvedValue(null), create: jest.fn().mockResolvedValue({ id: 'custom-svc' }) },
+      orderItem: { create: jest.fn().mockReturnValue('item') },
+      orderBookingDetail: { create: jest.fn().mockReturnValue('detail') },
+      order: { delete: jest.fn() },
+      $transaction: jest.fn().mockResolvedValue([]),
+    };
+    const orders = { create: jest.fn().mockResolvedValue({ id: 'o1' }) };
+    const locations = { isValidLocation: jest.fn().mockReturnValue(true) };
+    const service = new OrderPlacementService(prisma as never, orders as never, locations as never);
+    // Saving the place to the profile is covered elsewhere.
+    jest.spyOn(service as unknown as { rememberAddress: () => Promise<void> }, 'rememberAddress').mockResolvedValue();
+    return { service, prisma, orders };
+  }
+
+  it('prices the order at what the admin typed, on the hidden custom service, with the typed names kept', async () => {
+    const { service, prisma, orders } = buildCustom();
+    const result = await service.placeCustomOrderForCustomer(customDto);
+
+    expect(prisma.service.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ isActive: false }) }));
+    expect(orders.create).toHaveBeenCalledWith({ serviceId: 'custom-svc', originalPrice: 2500 }, { id: 'c1', role: 'CUSTOMER' }, { districtId: 1, upazilaId: 9 });
+    expect(prisma.orderBookingDetail.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ customServiceName: 'Generator', subServiceName: 'Generator servicing', description: 'Makes a noise', addressDetail: 'House 1' }),
+    });
+    expect(result.quote).toEqual({ lines: [{ label: 'Generator servicing', unitPrice: 2500, count: 1, amount: 2500 }], total: 2500 });
+  });
+
+  it('refuses a phone number in the typed names (providers read them)', async () => {
+    const { service, orders } = buildCustom();
+    await expect(service.placeCustomOrderForCustomer({ ...customDto, subServiceName: 'Call 01712345678' })).rejects.toBeInstanceOf(BadRequestException);
+    expect(orders.create).not.toHaveBeenCalled();
+  });
+});

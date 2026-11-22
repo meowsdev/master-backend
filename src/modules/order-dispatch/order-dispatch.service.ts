@@ -2,6 +2,7 @@ import { BadRequestException, ConflictException, ForbiddenException, Inject, Inj
 import { OfferStatus, OrderStatus, Prisma, UserRole } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { USER_EVENT_PUBLISHER } from './user-events';
+import { isCustomServiceId } from '../order-placement/custom-service';
 import type { UserEventPublisher } from './user-events';
 
 /** How many providers hear about a new order at once. */
@@ -51,6 +52,9 @@ export class OrderDispatchService {
     take: number,
     areaFilter: Prisma.ProviderProfileWhereInput,
   ) {
+    // An admin's custom order (a service not in the catalog) goes to every available provider in the area:
+    // nobody has that service switched on, so the skill filter would leave no one.
+    const isCustom = await isCustomServiceId(client, order.serviceId);
     const providers = await client.providerProfile.findMany({
       where: {
         ...areaFilter,
@@ -63,7 +67,7 @@ export class OrderDispatchService {
           status: 'ACTIVE',
           isRestricted: false,
           ...(order.customerUserId ? { id: { not: order.customerUserId } } : {}),
-          serviceAssignments: { some: { serviceId: order.serviceId, isActive: true } },
+          ...(isCustom ? {} : { serviceAssignments: { some: { serviceId: order.serviceId, isActive: true } } }),
         },
       },
       orderBy: [{ rating: 'desc' }, { totalCompletedOrders: 'desc' }],
