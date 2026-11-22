@@ -22,13 +22,15 @@ function build(orderOverrides: Record<string, unknown> = {}) {
   };
   const tx = {
     serviceRevision: { updateMany: jest.fn() },
-    orderPaymentAndTip: { upsert: jest.fn().mockResolvedValue({}), updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+    orderPaymentAndTip: { upsert: jest.fn().mockResolvedValue({}), update: jest.fn().mockResolvedValue({}), updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
     order: { update: jest.fn() },
+    extraChargeRequest: { findMany: jest.fn().mockResolvedValue([]) },
     providerProfile: { findUnique: jest.fn().mockResolvedValue({ id: 'provider-profile', walletBalance: 1000 }), update: jest.fn() },
   };
   const prisma = {
     order: { findUnique: jest.fn().mockResolvedValue(order) },
     orderPaymentAndTip: { upsert: jest.fn().mockResolvedValue({ paymentMode: 'ONLINE' }) },
+    extraChargeRequest: { count: jest.fn().mockResolvedValue(0) },
     $transaction: jest.fn((callback: (client: typeof tx) => unknown) => callback(tx)),
   };
   const gateway = { charge: jest.fn().mockResolvedValue({ success: true, transactionId: 'T1' }) };
@@ -100,25 +102,74 @@ describe('OrderCompletionService', () => {
   });
 
   describe('revision (7-day warranty)', () => {
-    const inRevision = { revisions: [{ revisionStatus: 'REQUESTED' }], paymentAndTip: { paymentMode: 'CASH' } };
+    const revisionStart = new Date('2026-11-20T10:00:00.000Z');
+    const firstCompletion = new Date('2026-11-18T10:00:00.000Z');
+    const inRevision = {
+      revisions: [{ revisionStatus: 'REQUESTED', createdAt: revisionStart }],
+      paymentAndTip: { paymentMode: 'CASH', tipAmount: 50 },
+      completedAt: firstCompletion,
+      dueAmount: 0,
+      advancePaid: 2900,
+    };
+    const finishDto = { reason: 'Gas leak missed in the first service', wasQualityIssue: true };
 
-    it('closes the revision and the order again without a new payment or commission', async () => {
+    it('closes the revision and the order again without a new payment or commission, keeping the reason', async () => {
       const { service, tx } = build(inRevision);
-      await service.finishRevision('order-1', PROVIDER);
-      expect(tx.serviceRevision.updateMany).toHaveBeenCalledWith(expect.objectContaining({ data: { revisionStatus: 'COMPLETED' } }));
+      await service.finishRevision('order-1', finishDto, PROVIDER);
+      expect(tx.serviceRevision.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({ data: { completionReason: finishDto.reason, wasQualityIssue: true } }),
+      );
+      expect(tx.serviceRevision.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ revisionStatus: 'COMPLETED' }) }),
+      );
       expect(tx.order.update).toHaveBeenCalledWith(expect.objectContaining({ data: { orderStatus: 'COMPLETED' } }));
       expect(tx.orderPaymentAndTip.upsert).not.toHaveBeenCalled();
       expect(tx.providerProfile.update).not.toHaveBeenCalled();
     });
 
+    it('asks how the customer pays when extra charges were added during the revision', async () => {
+      const { service } = build({ ...inRevision, dueAmount: 1500, totalPrice: 4400 });
+      await expect(service.finishRevision('order-1', finishDto, PROVIDER)).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('settles revision extras in cash: only their commission, warranty clock and tip kept', async () => {
+      const { service, tx } = build({ ...inRevision, dueAmount: 1500, totalPrice: 4400, adminCommission: 440 });
+      tx.extraChargeRequest.findMany.mockResolvedValue([{ totalAmount: 1500 }]);
+      await service.finishRevision('order-1', { ...finishDto, paymentMode: 'CASH' }, PROVIDER);
+
+      expect(tx.extraChargeRequest.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: expect.objectContaining({ createdAt: { gte: revisionStart } }) }),
+      );
+      // 10% of 1500 only; the first job's 290 was taken at the first completion.
+      expect(tx.providerProfile.update).toHaveBeenCalledTimes(1);
+      expect(tx.providerProfile.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ walletBalance: 850 }) }));
+      const orderData = tx.order.update.mock.calls[0][0].data;
+      expect(orderData).toEqual(expect.objectContaining({ orderStatus: 'COMPLETED', dueAmount: 0, paymentStatus: 'PAID' }));
+      expect(orderData.completedAt).toBeUndefined();
+      expect(tx.orderPaymentAndTip.upsert).toHaveBeenCalledWith(expect.objectContaining({ update: expect.objectContaining({ tipAmount: 50 }) }));
+    });
+
+    it('sends revision extras to the customer to pay online and keeps the order running', async () => {
+      const { service, tx } = build({ ...inRevision, dueAmount: 1500, totalPrice: 4400 });
+      await service.finishRevision('order-1', { ...finishDto, paymentMode: 'ONLINE' }, PROVIDER);
+      expect(tx.orderPaymentAndTip.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ paymentMode: 'ONLINE' }) }));
+      expect(tx.order.update).not.toHaveBeenCalled();
+    });
+
+    it('will not finish while an extra-charge request is unanswered', async () => {
+      const { service, prisma } = build(inRevision);
+      prisma.extraChargeRequest.count.mockResolvedValue(1);
+      await expect(service.finishRevision('order-1', finishDto, PROVIDER)).rejects.toBeInstanceOf(ConflictException);
+    });
+
     it('lets only the provider handling the order finish it', async () => {
       const { service } = build(inRevision);
-      await expect(service.finishRevision('order-1', CUSTOMER)).rejects.toBeInstanceOf(ForbiddenException);
+      await expect(service.finishRevision('order-1', finishDto, CUSTOMER)).rejects.toBeInstanceOf(ForbiddenException);
     });
 
     it('refuses when there is no revision in progress', async () => {
       const { service } = build({ revisions: [] });
-      await expect(service.finishRevision('order-1', PROVIDER)).rejects.toBeInstanceOf(BadRequestException);
+      await expect(service.finishRevision('order-1', finishDto, PROVIDER)).rejects.toBeInstanceOf(BadRequestException);
     });
 
     it('will not bill an order in revision a second time through Work Complete', async () => {

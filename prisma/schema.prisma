@@ -609,6 +609,12 @@ model ServiceRevision {
   attachedImages    String[]
   revisionStatus    RevisionStatus @default(REQUESTED)
   warrantyExpiresAt DateTime?
+  /// Written by the provider / technician when finishing: why the order came back after completion.
+  completionReason  String?        @db.Text
+  /// The provider's own answer: was the first job's quality the cause of this revision?
+  wasQualityIssue   Boolean?
+  /// When the revision was finished (and settled, if extra charges were added during it).
+  completedAt       DateTime?
   createdAt         DateTime       @default(now())
   updatedAt         DateTime       @updatedAt
 

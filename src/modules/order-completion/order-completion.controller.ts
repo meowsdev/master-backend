@@ -2,7 +2,7 @@ import { Body, Controller, HttpCode, HttpStatus, Param, ParseUUIDPipe, Post, Req
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { UserRole } from '@prisma/client';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
-import { CompleteOrderDto, PayOnlineDto } from './dto/order-completion.dto';
+import { CompleteOrderDto, FinishRevisionDto, PayOnlineDto } from './dto/order-completion.dto';
 import { OrderCompletionService } from './order-completion.service';
 
 interface AuthenticatedRequest {
@@ -25,9 +25,12 @@ export class OrderCompletionController {
 
   @Post(':orderId/finish-revision')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Provider marks the revision (re-work) as done; the order is completed again without new charges' })
-  finishRevision(@Param('orderId', new ParseUUIDPipe()) orderId: string, @Req() req: AuthenticatedRequest) {
-    return this.completion.finishRevision(orderId, req.user);
+  @ApiOperation({
+    summary:
+      'Provider marks the revision (re-work) as done with the reason it came back. Extra charges approved during the revision are settled (cash now, or online by the customer).',
+  })
+  finishRevision(@Param('orderId', new ParseUUIDPipe()) orderId: string, @Body() dto: FinishRevisionDto, @Req() req: AuthenticatedRequest) {
+    return this.completion.finishRevision(orderId, dto, req.user);
   }
 
   @Post(':orderId/pay-online')

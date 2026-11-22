@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsIn, IsNumber, IsOptional, Max, Min } from 'class-validator';
+import { IsBoolean, IsIn, IsNumber, IsOptional, IsString, Max, MaxLength, Min, MinLength } from 'class-validator';
 
 export const COMPLETION_PAYMENT_MODES = ['CASH', 'ONLINE'] as const;
 export const ONLINE_PAYMENT_METHODS = ['BKASH', 'NAGAD', 'CARD'] as const;
@@ -18,6 +18,26 @@ export class CompleteOrderDto {
   @Min(0)
   @Max(MAX_TIP_AMOUNT)
   tipAmount?: number;
+}
+
+export class FinishRevisionDto {
+  /** Why the order came back after it was completed, in the provider's / technician's words. */
+  @ApiProperty({ example: 'Gas pressure was low; the first service missed a small leak.' })
+  @IsString()
+  @MinLength(5)
+  @MaxLength(1000)
+  reason!: string;
+
+  /** Was the first job's quality the cause? Kept for the provider's quality record. */
+  @ApiProperty({ example: true })
+  @IsBoolean()
+  wasQualityIssue!: boolean;
+
+  /** Needed only when extra charges were approved during the revision (money is still due). */
+  @ApiPropertyOptional({ enum: COMPLETION_PAYMENT_MODES })
+  @IsOptional()
+  @IsIn(COMPLETION_PAYMENT_MODES)
+  paymentMode?: (typeof COMPLETION_PAYMENT_MODES)[number];
 }
 
 export class PayOnlineDto {

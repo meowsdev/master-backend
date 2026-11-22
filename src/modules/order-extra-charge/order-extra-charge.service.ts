@@ -51,13 +51,20 @@ export class OrderExtraChargeService {
     if (order.orderStatus !== OrderStatus.IN_PROGRESS) {
       throw new BadRequestException('Extra charges can only be added while the work is in progress');
     }
-    if (order.priceEditCount >= MAX_APPROVED_EXTRA_CHARGES) {
+    // The warranty covers the service only. Parts or a bigger problem found during a revision are billed
+    // as extra charges, and each revision gets its own price-change limit (the first job's edits do not count).
+    const openRevision = await this.prisma.serviceRevision.findFirst({
+      where: { orderId, revisionStatus: { in: [...OPEN_REVISION_STATUSES] } },
+      select: { createdAt: true },
+    });
+    const priceEdits = openRevision
+      ? await this.prisma.extraChargeRequest.count({
+          where: { orderId, status: ExtraChargeStatus.APPROVED, createdAt: { gte: openRevision.createdAt } },
+        })
+      : order.priceEditCount;
+    if (priceEdits >= MAX_APPROVED_EXTRA_CHARGES) {
       throw new BadRequestException(`The price can be changed at most ${MAX_APPROVED_EXTRA_CHARGES} times`);
     }
-
-    // Warranty re-work is free: an order back for revision takes no new charges.
-    const openRevisions = await this.prisma.serviceRevision.count({ where: { orderId, revisionStatus: { in: [...OPEN_REVISION_STATUSES] } } });
-    if (openRevisions > 0) throw new BadRequestException('This order is in warranty revision; extra charges cannot be added');
 
     const payment = await this.prisma.orderPaymentAndTip.findUnique({ where: { orderId }, select: { paymentMode: true } });
     if (payment?.paymentMode === 'ONLINE') throw new BadRequestException('The work is finished and waiting for payment');

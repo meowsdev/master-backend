@@ -47,13 +47,17 @@ describe('extra bill for a customer who does not use the app', () => {
   beforeEach(() => { jest.useFakeTimers().setSystemTime(NOW); });
   afterEach(() => jest.useRealTimers());
 
-  function buildRequest(isVerified: boolean) {
-    const order = { id: 'o1', orderStatus: 'IN_PROGRESS', totalPrice: 2100, priceEditCount: 0, customer: { userId: CUSTOMER.id, user: { isVerified } }, provider: { userId: 'provider-user' }, technician: null };
+  function buildRequest(isVerified: boolean, { openRevision = null as { createdAt: Date } | null, priceEditCount = 0, approvedInRevision = 0 } = {}) {
+    const order = { id: 'o1', orderStatus: 'IN_PROGRESS', totalPrice: 2100, priceEditCount, customer: { userId: CUSTOMER.id, user: { isVerified } }, provider: { userId: 'provider-user' }, technician: null };
     const prisma = {
       order: { findUnique: jest.fn().mockResolvedValue(order) },
-      serviceRevision: { count: jest.fn().mockResolvedValue(0) },
+      serviceRevision: { findFirst: jest.fn().mockResolvedValue(openRevision) },
       orderPaymentAndTip: { findUnique: jest.fn().mockResolvedValue(null) },
-      extraChargeRequest: { findFirst: jest.fn().mockResolvedValue(null), create: jest.fn().mockImplementation(({ data }) => Promise.resolve(data)) },
+      extraChargeRequest: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        count: jest.fn().mockResolvedValue(approvedInRevision),
+        create: jest.fn().mockImplementation(({ data }) => Promise.resolve(data)),
+      },
     };
     return { service: new OrderExtraChargeService(prisma as never), prisma };
   }
@@ -64,6 +68,17 @@ describe('extra bill for a customer who does not use the app', () => {
     const { service } = buildRequest(false);
     const created = await service.request('o1', dto, provider);
     expect(created.autoApproveAt).toEqual(new Date(NOW.getTime() + 30 * 60 * 1000));
+  });
+
+  it('allows extra charges during a warranty revision (parts are not covered)', async () => {
+    const { service } = buildRequest(true, { openRevision: { createdAt: NOW }, priceEditCount: 2 });
+    const created = await service.request('o1', dto, provider);
+    expect(created.totalAmount).toBe(1600);
+  });
+
+  it('limits each revision to its own two price changes', async () => {
+    const { service } = buildRequest(true, { openRevision: { createdAt: NOW }, approvedInRevision: 2 });
+    await expect(service.request('o1', dto, provider)).rejects.toThrow('at most 2 times');
   });
 
   it('waits for the customer when they use the app', async () => {

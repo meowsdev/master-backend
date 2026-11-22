@@ -413,8 +413,40 @@ export class AuthService {
 
     return {
       ...user,
+      ...(await this.lastOrderPlaceFallback(user)),
       availableRoles,
       activeProfile: this.getActiveProfile(user),
+    };
+  }
+
+  /**
+   * A customer whose orders predate the saved address (or whose save failed) has no default address yet.
+   * Their latest order's place fills the Place Order form instead, so they never type it twice.
+   */
+  private async lastOrderPlaceFallback(user: {
+    role: UserRole;
+    districtId: number | null;
+    upazilaId: number | null;
+    addresses: Array<{ id: string; addressText: string; isDefault: boolean }>;
+    customerProfile: { id: string } | null;
+  }) {
+    const hasArea = Boolean(user.districtId && user.upazilaId);
+    if (user.role !== UserRole.CUSTOMER || !user.customerProfile || (user.addresses.length > 0 && hasArea)) {
+      return {};
+    }
+
+    const last = await this.prisma.orderBookingDetail.findFirst({
+      where: { order: { customerId: user.customerProfile.id } },
+      orderBy: { createdAt: 'desc' },
+      select: { orderId: true, addressDetail: true, districtId: true, upazilaId: true },
+    });
+    if (!last) return {};
+
+    return {
+      ...(hasArea ? {} : { districtId: last.districtId, upazilaId: last.upazilaId }),
+      ...(user.addresses.length > 0
+        ? {}
+        : { addresses: [{ id: last.orderId, addressText: last.addressDetail, isDefault: true }] }),
     };
   }
 
