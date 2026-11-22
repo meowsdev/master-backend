@@ -1,8 +1,10 @@
 import { ApiPropertyOptional, ApiProperty } from '@nestjs/swagger';
+import { PriceUnit } from '@prisma/client';
 import {
   ArrayMaxSize,
   IsArray,
   IsBoolean,
+  IsEnum,
   IsNotEmpty,
   IsNumber,
   IsOptional,
@@ -12,7 +14,7 @@ import {
   MaxLength,
 } from 'class-validator';
 
-/** What the public service page shows besides the name and description. */
+/** Fields shared by create and update: what the public service page shows, plus how the service is counted. */
 export class ServiceDisplayFieldsDto {
   @ApiPropertyOptional({ example: 'এসি রিপেয়ার এন্ড সার্ভিস' })
   @IsOptional()
@@ -37,6 +39,12 @@ export class ServiceDisplayFieldsDto {
   @IsString({ each: true })
   @MaxLength(100, { each: true })
   features?: string[];
+
+  /** FIXED = not countable; PER_UNIT / PER_SQFT = the customer picks how many when ordering. */
+  @ApiPropertyOptional({ enum: PriceUnit, example: PriceUnit.PER_UNIT })
+  @IsOptional()
+  @IsEnum(PriceUnit)
+  priceUnit?: PriceUnit;
 }
 
 export class CreateServiceDto extends ServiceDisplayFieldsDto {
