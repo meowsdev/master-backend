@@ -175,3 +175,110 @@ export class AdminCustomOrderDto {
   @IsString()
   timeSlot!: string;
 }
+
+/** One option in the cart. */
+export class CartItemDto {
+  @ApiProperty({ format: 'uuid' })
+  @IsUUID()
+  variantId!: string;
+
+  @ApiPropertyOptional({ minimum: 1, default: 1 })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  quantity?: number;
+}
+
+/** A cart of one main service's options. Shared by the live quote and the order. */
+export class QuoteCartDto {
+  @ApiProperty({ format: 'uuid', description: 'The main service (chat) the cart belongs to' })
+  @IsUUID()
+  categoryId!: string;
+
+  @ApiProperty({ type: [CartItemDto] })
+  @IsArray()
+  @ArrayMaxSize(20)
+  @ValidateNested({ each: true })
+  @Type(() => CartItemDto)
+  items!: CartItemDto[];
+
+  @ApiPropertyOptional({ type: [AnswerDto] })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(10)
+  @ValidateNested({ each: true })
+  @Type(() => AnswerDto)
+  answers?: AnswerDto[];
+}
+
+/** Where and when: the same for a cart order and a custom order. */
+export class OrderPlaceFieldsDto {
+  @ApiProperty()
+  @IsInt()
+  districtId!: number;
+
+  @ApiProperty()
+  @IsInt()
+  upazilaId!: number;
+
+  @ApiProperty({ maxLength: 300 })
+  @IsString()
+  @MaxLength(300)
+  addressDetail!: string;
+
+  @ApiProperty({ example: '2026-11-20' })
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'scheduledDate must be YYYY-MM-DD' })
+  scheduledDate!: string;
+
+  @ApiProperty({ example: '09:00 AM - 11:00 AM' })
+  @IsString()
+  timeSlot!: string;
+
+  @ApiPropertyOptional({ type: [String] })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(5)
+  @IsString({ each: true })
+  imageUrls?: string[];
+}
+
+/** Deliberately has no price field: the backend works the price out itself. */
+export class PlaceCartOrderDto extends OrderPlaceFieldsDto {
+  @ApiProperty({ format: 'uuid' })
+  @IsUUID()
+  categoryId!: string;
+
+  @ApiProperty({ type: [CartItemDto] })
+  @IsArray()
+  @ArrayMaxSize(20)
+  @ValidateNested({ each: true })
+  @Type(() => CartItemDto)
+  items!: CartItemDto[];
+
+  @ApiPropertyOptional({ type: [AnswerDto] })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(10)
+  @ValidateNested({ each: true })
+  @Type(() => AnswerDto)
+  answers?: AnswerDto[];
+
+  @ApiPropertyOptional({ maxLength: 1000 })
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  description?: string;
+}
+
+/** The customer's Custom card: a problem not in the catalog. No price; the provider quotes after a free visit. */
+export class CustomerCustomOrderDto extends OrderPlaceFieldsDto {
+  @ApiProperty({ format: 'uuid', description: 'The main service the problem belongs to' })
+  @IsUUID()
+  categoryId!: string;
+
+  @ApiProperty({ maxLength: 1000 })
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(1000)
+  description!: string;
+}

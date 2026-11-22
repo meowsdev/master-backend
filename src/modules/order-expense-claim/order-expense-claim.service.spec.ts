@@ -15,6 +15,7 @@ function build(orderOverrides: Record<string, unknown> = {}, existingClaim: { st
     provider: { userId: PROVIDER.id },
     technician: { userId: TECHNICIAN.id },
     paymentAndTip: { paymentMode: 'CASH' },
+    revisions: [],
     ...orderOverrides,
   };
   const tx = {
@@ -63,6 +64,12 @@ describe('sending costs', () => {
   it('waits until the work is complete', async () => {
     const { service } = build({ completedAt: null });
     await expect(service.submit('o1', parts, PROVIDER)).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('is closed while a revision is open', async () => {
+    const { service, prisma } = build({ revisions: [{ id: 'r1' }] });
+    await expect(service.submit('o1', parts, PROVIDER)).rejects.toBeInstanceOf(BadRequestException);
+    expect(prisma.orderExpenseClaim.create).not.toHaveBeenCalled();
   });
 
   it('allows one claim under review and none after an approval', async () => {

@@ -39,6 +39,6 @@ describe('placing an order while the only matching provider owes a due', () => {
     const dispatch = { findEligibleProviderIds: jest.fn().mockResolvedValue(['p1']), dispatchNextWave: jest.fn().mockResolvedValue(1) };
     const service = new OrdersService(prisma as never, dispatch as never);
     await expect(service.create({ serviceId: 's1', customerId: 'c1', originalPrice: 1500 } as never, { id: 'u-admin', role: 'ADMIN' as never })).resolves.toBe(created);
-    expect(dispatch.dispatchNextWave).toHaveBeenCalledWith('o1', undefined);
+    expect(dispatch.dispatchNextWave).toHaveBeenCalledWith('o1', undefined, undefined);
   });
 });

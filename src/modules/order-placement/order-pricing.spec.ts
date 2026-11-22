@@ -34,3 +34,26 @@ describe('calculateQuote', () => {
   });
 });
 
+
+describe('calculateCartQuote', () => {
+  const { calculateCartQuote } = jest.requireActual('./order-pricing');
+  const small = { name: 'AC Check Up (1 - 2.5 Ton)', unitPrice: 300, isCountable: true, maxCount: 10, quantity: 2 };
+  const gas = { name: 'AC Gas Checkup (Standard)', unitPrice: 418, isCountable: false, maxCount: 1, quantity: 5 };
+  const hanging = { questionText: 'Outdoor unit hanging?', option: { label: 'Yes', unitPrice: 300, isCountable: true }, count: 3 };
+
+  it('adds one line per item, counting only countable items', () => {
+    const quote = calculateCartQuote([small, gas], []);
+    expect(quote.lines.map((item: { count: number }) => item.count)).toEqual([2, 1]);
+    expect(quote.total).toBe(600 + 418);
+  });
+
+  it('charges a countable answer up to the units in the cart', () => {
+    expect(calculateCartQuote([small, gas], [hanging]).total).toBe(600 + 418 + 900);
+    expect(() => calculateCartQuote([small], [hanging])).toThrow();
+  });
+
+  it('rejects an empty cart and an over-limit quantity', () => {
+    expect(() => calculateCartQuote([], [])).toThrow();
+    expect(() => calculateCartQuote([{ ...small, quantity: 11 }], [])).toThrow();
+  });
+});

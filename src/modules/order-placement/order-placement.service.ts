@@ -5,9 +5,10 @@ import { Prisma, PriceUnit, UserRole } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { LocationsService } from '../locations/locations.service';
 import { OrdersService } from '../orders/orders.service';
-import { AdminCustomOrderDto, AdminPlaceOrderDto, PlaceOrderDto, QuoteOrderDto } from './dto/place-order.dto';
+import { AdminCustomOrderDto, AdminPlaceOrderDto, CustomerCustomOrderDto, OrderPlaceFieldsDto, PlaceCartOrderDto, PlaceOrderDto, QuoteCartDto, QuoteOrderDto } from './dto/place-order.dto';
 import { ensureCustomService } from './custom-service';
-import { calculateQuote, PricedAnswer } from './order-pricing';
+import { ensureCategoryCustomService } from '../catalog/catalog-custom';
+import { calculateCartQuote, calculateQuote, PriceLine, PricedAnswer } from './order-pricing';
 import { assertValidSchedule, TIME_SLOTS } from './order-schedule';
 
 /** Only files this backend stored itself may be attached to an order. */
@@ -44,7 +45,7 @@ export class OrderPlacementService {
         name: true,
         iconUrl: true,
         services: {
-          where: { isActive: true, isDeleted: false },
+          where: { isActive: true, isDeleted: false, isCustom: false },
           orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
           select: { id: true, name: true, nameBn: true, imageUrl: true, basePrice: true, priceUnit: true },
         },
@@ -300,6 +301,161 @@ export class OrderPlacementService {
     }
   }
 
+  /** Live total of a cart; same maths as the real order, nothing is saved. */
+  async quoteCart(dto: QuoteCartDto) {
+    const { quote } = await this.priceCart(dto);
+    return quote;
+  }
+
+  /**
+   * A cart of one main service's options becomes one order (one chat tab). Its first sub-service is the order's
+   * service for older screens; every option is an order item, and only providers offering all of them are asked.
+   */
+  async placeCartOrder(dto: PlaceCartOrderDto, user: { id: string; role: UserRole }) {
+    assertNoPhoneNumber(dto.description);
+    const { picked, quote } = await this.priceCart(dto);
+    this.assertPlace(dto);
+
+    const serviceIds = [...new Set(picked.map((item) => item.variant.serviceId))];
+    const order = await this.orders.create({ serviceId: serviceIds[0], originalPrice: quote.total }, user, { districtId: dto.districtId, upazilaId: dto.upazilaId }, { serviceIds });
+
+    const firstName = picked[0].variant.service.name;
+    const title = picked.length === 1 ? firstName : `${firstName} +${picked.length - 1}`;
+    try {
+      await this.prisma.$transaction([
+        ...picked.map((item, index) =>
+          this.prisma.orderItem.create({
+            data: {
+              orderId: order.id,
+              subServiceId: item.variant.serviceId,
+              variantId: item.variant.id,
+              variantNameSnapshot: item.variant.name.slice(0, 100),
+              nameSnapshot: item.variant.service.name.slice(0, 100),
+              unitPriceSnapshot: item.variant.price,
+              priceUnitSnapshot: item.variant.priceUnit,
+              quantity: quote.lines[index].count,
+              lineTotal: quote.lines[index].amount,
+              durationSnapshot: item.variant.durationMin,
+            },
+          }),
+        ),
+        this.bookingDetail(order.id, dto, { subServiceId: serviceIds[0], subServiceName: title, quantity: quote.lines[0].count, description: dto.description, lines: quote.lines }),
+      ]);
+    } catch (error) {
+      // Never leave a priced order behind without the details the provider needs.
+      await this.prisma.order.delete({ where: { id: order.id } });
+      throw error;
+    }
+
+    await this.rememberAddress(user.id, dto);
+    return { order, quote };
+  }
+
+  /**
+   * The customer's Custom card: a problem the catalog does not list. The order has no price (the visit is free);
+   * it lands in the main service's chat as a tab and the provider sends a quote after the visit (OrderQuoteService).
+   */
+  async placeCustomerCustomOrder(dto: CustomerCustomOrderDto, user: { id: string; role: UserRole }) {
+    assertNoPhoneNumber(dto.description);
+    const category = await this.prisma.serviceCategory.findFirst({ where: { id: dto.categoryId, isActive: true, isDeleted: false }, select: { id: true, name: true } });
+    if (!category) throw new NotFoundException('Service not found');
+    this.assertPlace(dto);
+
+    const serviceId = await ensureCategoryCustomService(this.prisma, category.id);
+    const order = await this.orders.create({ serviceId, originalPrice: 0 }, user, { districtId: dto.districtId, upazilaId: dto.upazilaId }, { serviceIds: [serviceId], isPricePending: true });
+
+    const name = `Custom: ${category.name}`.slice(0, 100);
+    try {
+      await this.prisma.$transaction([
+        this.prisma.orderItem.create({
+          data: { orderId: order.id, subServiceId: serviceId, nameSnapshot: name, unitPriceSnapshot: 0, priceUnitSnapshot: PriceUnit.FIXED, quantity: 1, lineTotal: 0 },
+        }),
+        this.bookingDetail(order.id, dto, { subServiceId: serviceId, subServiceName: name, quantity: 1, description: dto.description, lines: [] }),
+      ]);
+    } catch (error) {
+      await this.prisma.order.delete({ where: { id: order.id } });
+      throw error;
+    }
+
+    await this.rememberAddress(user.id, dto);
+    return { order, quote: { lines: [], total: 0 } };
+  }
+
+  private assertPlace(dto: OrderPlaceFieldsDto) {
+    if (!this.locations.isValidLocation(dto.districtId, dto.upazilaId)) {
+      throw new BadRequestException('Please choose a valid district and upazila');
+    }
+    assertValidSchedule(dto.scheduledDate, dto.timeSlot);
+    if ((dto.imageUrls ?? []).some((url) => !UPLOAD_URL_PATTERN.test(url))) {
+      throw new BadRequestException('Unsupported image attachment');
+    }
+  }
+
+  private bookingDetail(
+    orderId: string,
+    dto: OrderPlaceFieldsDto,
+    detail: { subServiceId: string; subServiceName: string; quantity: number; description?: string; lines: PriceLine[] },
+  ) {
+    return this.prisma.orderBookingDetail.create({
+      data: {
+        orderId,
+        subServiceId: detail.subServiceId,
+        subServiceName: detail.subServiceName.slice(0, 200),
+        quantity: detail.quantity,
+        description: detail.description?.trim() || null,
+        districtId: dto.districtId,
+        upazilaId: dto.upazilaId,
+        addressDetail: dto.addressDetail.trim(),
+        scheduledDate: new Date(`${dto.scheduledDate}T00:00:00.000Z`),
+        timeSlot: dto.timeSlot,
+        imageUrls: dto.imageUrls ?? [],
+        priceBreakdown: detail.lines as unknown as Prisma.InputJsonValue,
+      },
+    });
+  }
+
+  /** Resolves the cart's options (all live, all of the given main service) and prices them. */
+  private async priceCart(dto: QuoteCartDto) {
+    if (dto.items.length === 0) throw new BadRequestException('Add at least one service to the cart');
+    const variants = await this.prisma.serviceVariant.findMany({
+      where: {
+        id: { in: dto.items.map((item) => item.variantId) },
+        isActive: true,
+        isDeleted: false,
+        service: { isActive: true, isDeleted: false, isCustom: false, categoryId: dto.categoryId },
+      },
+      select: { id: true, name: true, price: true, priceUnit: true, durationMin: true, serviceId: true, service: { select: { name: true } } },
+    });
+    const picked = dto.items.map((item) => {
+      const variant = variants.find((row) => row.id === item.variantId);
+      if (!variant) throw new BadRequestException('A service in your cart is no longer available');
+      return { variant, quantity: item.quantity ?? 1 };
+    });
+
+    const category = await this.prisma.serviceCategory.findFirst({
+      where: { id: dto.categoryId, isActive: true, isDeleted: false },
+      select: {
+        questions: {
+          where: { isActive: true },
+          select: { id: true, text: true, options: { select: { id: true, label: true, unitPrice: true, isCountable: true } } },
+        },
+      },
+    });
+    if (!category) throw new NotFoundException('Service not found');
+
+    const quote = calculateCartQuote(
+      picked.map(({ variant, quantity }) => ({
+        name: variant.name === 'Standard' ? variant.service.name : `${variant.service.name} (${variant.name})`,
+        unitPrice: Number(variant.price),
+        isCountable: variant.priceUnit !== PriceUnit.FIXED,
+        maxCount: MAX_QUANTITY[variant.priceUnit],
+        quantity,
+      })),
+      this.resolveAnswers(dto, category.questions),
+    );
+    return { picked, quote };
+  }
+
   private async priceSelection(dto: QuoteOrderDto) {
     const subService = await this.prisma.service.findFirst({
       where: { id: dto.serviceId, isActive: true, isDeleted: false },
@@ -331,7 +487,7 @@ export class OrderPlacementService {
   }
 
   private resolveAnswers(
-    dto: QuoteOrderDto,
+    dto: Pick<QuoteOrderDto, 'answers'>,
     questions: Array<{
       id: string;
       text: string;

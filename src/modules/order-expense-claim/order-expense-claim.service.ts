@@ -1,5 +1,5 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
-import { ExpenseClaimStatus, Prisma, UserRole } from '@prisma/client';
+import { ExpenseClaimStatus, Prisma, RevisionStatus, UserRole } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { isOrderStaff } from '../auth/role-policy';
 import { ApproveExpenseClaimDto, ExpenseItemDto, SubmitExpenseClaimDto } from './dto/expense-claim.dto';
@@ -28,6 +28,7 @@ const ORDER_SELECT = {
   provider: { select: { userId: true } },
   technician: { select: { userId: true } },
   paymentAndTip: { select: { paymentMode: true } },
+  revisions: { where: { revisionStatus: { in: [RevisionStatus.REQUESTED, RevisionStatus.ACCEPTED] } }, select: { id: true } },
 } satisfies Prisma.OrderSelect;
 
 /*
@@ -51,6 +52,8 @@ export class OrderExpenseClaimService {
     const isWorkingOnOrder = order.provider.userId === actor.id || order.technician?.userId === actor.id;
     if (!isWorkingOnOrder) throw new ForbiddenException('Only the provider or technician of this order can send its costs');
     if (!order.completedAt) throw new BadRequestException('Costs can be sent once the work is complete');
+    // During a revision the job is reopened: parts found then are billed as an Extra Charge, not as costs.
+    if (order.revisions.length > 0) throw new BadRequestException('Costs cannot be sent while a revision is open');
 
     const existing = await this.prisma.orderExpenseClaim.findFirst({
       where: { orderId, status: { in: [ExpenseClaimStatus.PENDING, ExpenseClaimStatus.APPROVED] } },

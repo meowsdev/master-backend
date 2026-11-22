@@ -158,7 +158,7 @@ export class ServiceAssigneeService {
 
     if (serviceIds.length > 0) {
       const validServices = await this.prisma.service.findMany({
-        where: { id: { in: serviceIds }, isActive: true, isDeleted: false },
+        where: { id: { in: serviceIds }, isActive: true, isDeleted: false, isCustom: false },
         select: { id: true },
       });
       const validIds = new Set(validServices.map((s) => s.id));
