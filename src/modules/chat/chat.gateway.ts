@@ -23,6 +23,7 @@ import {
 } from '../auth/auth-cookies.util';
 import { ChatService } from './chat.service';
 import { SendMessageDto } from './dto/send-message.dto';
+import { isOrderStaff } from '../auth/role-policy';
 
 export class ConversationRoomDto {
   @IsUUID()
@@ -193,11 +194,7 @@ export class ChatGateway
     const userId = await this.authenticate(client);
     const userRole = client.data?.user?.role;
 
-    const isStaffOrCounselor =
-      userRole === 'COUNSELOR' ||
-      userRole === 'ADMIN' ||
-      userRole === 'MANAGER' ||
-      userRole === 'SUPPORT';
+    const isStaffOrCounselor = isOrderStaff(userRole);
 
     const conversation = await this.prisma.chatSession.findFirst({
       where: isStaffOrCounselor

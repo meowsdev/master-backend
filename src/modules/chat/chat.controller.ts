@@ -33,6 +33,7 @@ import { ChatGateway } from './chat.gateway';
 import { ChatService } from './chat.service';
 import { CreateChatSessionDto } from './dto/create-chatSession.dto';
 import { SendMessageDto } from './dto/send-message.dto';
+import { isOrderStaff } from '../auth/role-policy';
 
 export class AddChatParticipantDto {
   @ApiProperty({ format: 'uuid' })
@@ -254,11 +255,7 @@ export class ChatController {
       select: { id: true, role: true },
     });
 
-    const isStaffOrCounselor =
-      user?.role === 'COUNSELOR' ||
-      user?.role === 'ADMIN' ||
-      user?.role === 'MANAGER' ||
-      user?.role === 'SUPPORT';
+    const isStaffOrCounselor = isOrderStaff(user?.role);
 
     const conversation = await this.prisma.chatSession.findFirst({
       where: isStaffOrCounselor

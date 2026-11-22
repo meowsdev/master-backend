@@ -18,6 +18,21 @@ export const SELF_SERVICE_SIGNUP_ROLES: readonly UserRole[] = [
 ];
 
 /**
+ * Staff who may open any order, read its chat and write into it. What else each of them may do
+ * (assign, edit services, manage members) is decided per endpoint.
+ */
+export const ORDER_STAFF_ROLES: readonly UserRole[] = [
+  UserRole.ADMIN,
+  UserRole.MANAGER,
+  UserRole.SUPPORT,
+  UserRole.HR,
+  UserRole.COUNSELOR,
+];
+
+export const isOrderStaff = (role?: UserRole | string | null): boolean =>
+  role !== undefined && role !== null && (ORDER_STAFF_ROLES as readonly string[]).includes(role);
+
+/**
  * Only these roles may create a technician, attach one to a provider, or put one on an order through the
  * general order update. Choosing which of a provider's OWN technicians works on an order is a separate,
  * narrower right of that order's provider and of an admin (`modules/order-technician`).

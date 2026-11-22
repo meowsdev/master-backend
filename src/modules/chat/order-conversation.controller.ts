@@ -1,9 +1,9 @@
 import { Controller, ForbiddenException, Get, NotFoundException, Param, ParseUUIDPipe, Req, UseGuards } from '@nestjs/common';
-import { UserRole } from '@prisma/client';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ChatSessionService } from './chat-session.service';
+import { isOrderStaff } from '../auth/role-policy';
 
 interface AuthenticatedRequest {
   user: { id: string; role: string };
@@ -38,8 +38,8 @@ export class OrderConversationController {
     });
     if (!order) throw new NotFoundException('Order not found');
 
-    // An administrator watches and joins the conversation that already exists; they never start one.
-    if (req.user.role === UserRole.ADMIN) {
+    // Staff watch and join the conversation that already exists; they never start one.
+    if (isOrderStaff(req.user.role)) {
       const category = await this.prisma.service.findUnique({ where: { id: order.serviceId }, select: { categoryId: true } });
       const existing = category
         ? await this.prisma.chatSession.findUnique({ where: { customerProfileId_categoryId: { customerProfileId: order.customerId, categoryId: category.categoryId } } })

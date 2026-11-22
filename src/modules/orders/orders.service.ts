@@ -8,7 +8,7 @@ import {
 import { UserRole, OrderStatus } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { OrderDispatchService, ServiceLocation } from '../order-dispatch/order-dispatch.service';
-import { assertCanManageTechnicians } from '../auth/role-policy';
+import { assertCanManageTechnicians, isOrderStaff } from '../auth/role-policy';
 import { createWithUniqueReference } from './order-reference';
 import { acceptanceStamp, completionStamp } from './order-view';
 import { CreateCustomOrderDto } from './dto/create-custom-order.dto';
@@ -27,7 +27,6 @@ import {
 } from './orders.helpers';
 
 /** Platform staff who may read any order. */
-const isOrderStaff = (role: UserRole) => role === UserRole.ADMIN || role === UserRole.MANAGER || role === UserRole.SUPPORT;
 
 @Injectable()
 export class OrdersService {
@@ -273,13 +272,7 @@ export class OrdersService {
   async findOneForUser(id: string, user: { id: string; role: UserRole }) {
     const order = await this.findOne(id);
 
-    if (
-      user.role === UserRole.ADMIN ||
-      user.role === UserRole.MANAGER ||
-      user.role === UserRole.SUPPORT
-    ) {
-      return order;
-    }
+    if (isOrderStaff(user.role)) return order;
 
     const isOwner = order.customer?.user?.id === user.id;
     const isAssignedProvider = order.provider?.user?.id === user.id;

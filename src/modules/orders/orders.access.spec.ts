@@ -19,7 +19,7 @@ describe('who may list a provider\'s or a customer\'s orders', () => {
   });
 
   it('turns away a technician and a customer from a provider\'s orders', async () => {
-    for (const role of ['TECHNICIAN', 'CUSTOMER', 'COUNSELOR']) {
+    for (const role of ['TECHNICIAN', 'CUSTOMER']) {
       const { service, prisma } = build({ providerProfileId: 'pp1' });
       await expect(service.findByProviderForUser('pp1', { id: 'u', role: role as never })).rejects.toBeInstanceOf(ForbiddenException);
       expect(prisma.order.findMany).not.toHaveBeenCalled();
@@ -34,7 +34,7 @@ describe('who may list a provider\'s or a customer\'s orders', () => {
   });
 
   it('lets platform staff read anyone\'s orders', async () => {
-    for (const role of ['ADMIN', 'MANAGER', 'SUPPORT']) {
+    for (const role of ['ADMIN', 'MANAGER', 'SUPPORT', 'HR', 'COUNSELOR']) {
       const { service } = build();
       await expect(service.findByProviderForUser('anyone', { id: 's', role: role as never })).resolves.toEqual([]);
       await expect(service.findByCustomerForUser('anyone', { id: 's', role: role as never })).resolves.toEqual([]);
