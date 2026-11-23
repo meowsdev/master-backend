@@ -44,7 +44,7 @@ export class ServicesService {
       where: { isActive: true, isDeleted: false },
       include: {
         services: {
-          where: { isActive: true, isDeleted: false },
+          where: { isActive: true, isDeleted: false, isCustom: false },
         },
         _count: { select: { services: true } },
       },
@@ -60,7 +60,7 @@ export class ServicesService {
       },
       include: {
         services: {
-          where: { isActive: true, isDeleted: false },
+          where: { isActive: true, isDeleted: false, isCustom: false },
         },
       },
     });
@@ -95,7 +95,15 @@ export class ServicesService {
   async createService(data: CreateServiceDto) {
     // The live database requires a slug, unique inside the main service.
     const slug = slugify(data.name, { lower: true, strict: true });
-    return this.prisma.service.create({ data: { ...data, slug } });
+    // Every sub-service starts with one priced option, so customers can add it to the cart right away;
+    // admins add more options (sizes, tons) in the catalog editor.
+    return this.prisma.service.create({
+      data: {
+        ...data,
+        slug,
+        variants: { create: { name: 'Standard', nameBn: 'স্ট্যান্ডার্ড', price: data.basePrice, priceUnit: data.priceUnit, durationMin: data.durationMin } },
+      },
+    });
   }
 
   async getAllServices(
@@ -107,6 +115,7 @@ export class ServicesService {
       where: {
         isActive: true,
         isDeleted: false,
+        isCustom: false,
         ...(categoryId ? { categoryId } : {}),
         ...(isPopular !== undefined ? { isPopular } : {}),
         ...(search

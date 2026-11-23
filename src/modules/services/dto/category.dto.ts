@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsNotEmpty, IsOptional, IsString } from 'class-validator';
+import { IsNotEmpty, IsOptional, IsString, IsUUID } from 'class-validator';
 
 export class CreateCategoryDto {
   @ApiProperty({ example: 'AC Repair Services' })
@@ -25,6 +25,12 @@ export class CreateCategoryDto {
   @IsString()
   @IsOptional()
   iconUrl?: string;
+
+  /** The top-bar category (ServiceGroup) the new main service sits in. */
+  @ApiProperty({ required: false, format: 'uuid' })
+  @IsUUID()
+  @IsOptional()
+  groupId?: string;
 }
 
 export class UpdateCategoryDto {

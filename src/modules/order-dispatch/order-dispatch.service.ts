@@ -37,7 +37,7 @@ export class OrderDispatchService {
    * none of those is left, providers who cover its district. A provider with no service area is never
    * asked. An order without a location (an admin-made custom order) skips the area check.
    */
-  async findEligibleProviderIds(order: { serviceId: string; customerUserId?: string; location?: ServiceLocation | null }, alreadyOfferedIds: string[] = [], client: Tx | PrismaService = this.prisma, take = providersPerWave()) {
+  async findEligibleProviderIds(order: { serviceId: string; serviceIds?: string[]; customerUserId?: string; location?: ServiceLocation | null }, alreadyOfferedIds: string[] = [], client: Tx | PrismaService = this.prisma, take = providersPerWave()) {
     if (!order.location) return this.queryProviders(order, alreadyOfferedIds, client, take, {});
 
     const inUpazila = await this.queryProviders(order, alreadyOfferedIds, client, take, { serviceAreas: { some: { upazilaId: order.location.upazilaId } } });
@@ -46,7 +46,7 @@ export class OrderDispatchService {
   }
 
   private async queryProviders(
-    order: { serviceId: string; customerUserId?: string },
+    order: { serviceId: string; serviceIds?: string[]; customerUserId?: string },
     alreadyOfferedIds: string[],
     client: Tx | PrismaService,
     take: number,
@@ -55,6 +55,7 @@ export class OrderDispatchService {
     // An admin's custom order (a service not in the catalog) goes to every available provider in the area:
     // nobody has that service switched on, so the skill filter would leave no one.
     const isCustom = await isCustomServiceId(client, order.serviceId);
+    const skillFilter = isCustom ? {} : await this.skillFilter(client, order.serviceIds?.length ? order.serviceIds : [order.serviceId]);
     const providers = await client.providerProfile.findMany({
       where: {
         ...areaFilter,
@@ -67,7 +68,7 @@ export class OrderDispatchService {
           status: 'ACTIVE',
           isRestricted: false,
           ...(order.customerUserId ? { id: { not: order.customerUserId } } : {}),
-          ...(isCustom ? {} : { serviceAssignments: { some: { serviceId: order.serviceId, isActive: true } } }),
+          ...skillFilter,
         },
       },
       orderBy: [{ rating: 'desc' }, { totalCompletedOrders: 'desc' }],
@@ -82,12 +83,27 @@ export class OrderDispatchService {
    * been taken. Runs under a lock on the order row, so the first wave and the timed follow-up waves can
    * never overlap. Returns how many providers were offered the order.
    */
-  async dispatchNextWave(orderId: string, knownLocation?: ServiceLocation): Promise<number> {
+  /**
+   * Which skills a provider needs. A cart order needs every sub-service in it switched on. A customer's custom
+   * order (the main service's hidden "Custom" sub-service) goes to anyone offering any sub-service of that main service.
+   */
+  private async skillFilter(client: Tx | PrismaService, serviceIds: string[]): Promise<Prisma.UserWhereInput> {
+    const ids = [...new Set(serviceIds)];
+    if (ids.length === 1) {
+      const service = await client.service.findUnique({ where: { id: ids[0] }, select: { isCustom: true, categoryId: true } });
+      if (service?.isCustom) return { serviceAssignments: { some: { isActive: true, service: { categoryId: service.categoryId, isCustom: false } } } };
+      return { serviceAssignments: { some: { serviceId: ids[0], isActive: true } } };
+    }
+    // A custom order is always a single item, so several ids are a cart: every one is needed.
+    return { AND: ids.map((serviceId) => ({ serviceAssignments: { some: { serviceId, isActive: true } } })) };
+  }
+
+  async dispatchNextWave(orderId: string, knownLocation?: ServiceLocation, knownServiceIds?: string[]): Promise<number> {
     const offered = await this.prisma.$transaction(async (tx) => {
       await tx.$queryRaw(Prisma.sql`SELECT "id" FROM "Order" WHERE "id" = ${orderId} FOR UPDATE`);
       const order = await tx.order.findUnique({
         where: { id: orderId },
-        select: { orderStatus: true, serviceId: true, customer: { select: { userId: true } }, bookingDetail: { select: { districtId: true, upazilaId: true } }, offers: { select: { providerId: true, wave: true, status: true, expiresAt: true } } },
+        select: { orderStatus: true, serviceId: true, items: { select: { subServiceId: true } }, customer: { select: { userId: true } }, bookingDetail: { select: { districtId: true, upazilaId: true } }, offers: { select: { providerId: true, wave: true, status: true, expiresAt: true } } },
       });
       if (!order || order.orderStatus !== OrderStatus.PENDING) return null;
 
@@ -97,7 +113,13 @@ export class OrderDispatchService {
 
       const providerIds = await this.findEligibleProviderIds(
         // The first wave runs before the booking details are saved, so the caller hands the location over.
-        { serviceId: order.serviceId, customerUserId: order.customer.userId, location: knownLocation ?? order.bookingDetail },
+        {
+          serviceId: order.serviceId,
+          // Like the location, the first wave runs before the order's items are saved.
+          serviceIds: knownServiceIds ?? (order.items?.length ? order.items.map((item) => item.subServiceId) : undefined),
+          customerUserId: order.customer.userId,
+          location: knownLocation ?? order.bookingDetail,
+        },
         order.offers.map((offer) => offer.providerId),
         tx,
       );

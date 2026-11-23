@@ -13,6 +13,7 @@ type Tx = Prisma.TransactionClient;
 const ORDER_SELECT = {
   id: true,
   orderStatus: true,
+  isPricePending: true,
   totalPrice: true,
   advancePaid: true,
   dueAmount: true,
@@ -50,6 +51,8 @@ export class OrderCompletionService {
     if (order.orderStatus !== OrderStatus.IN_PROGRESS) {
       throw new BadRequestException('Only an order that is in progress can be completed');
     }
+    // A custom order is finished only once the customer has accepted its price.
+    if (order.isPricePending) throw new BadRequestException('The customer has not accepted a price for this custom order yet');
     // A revision was already paid for: it is finished with finishRevision, never billed again.
     if (hasOpenRevision(order.revisions)) {
       throw new ConflictException('This order is in revision. Mark the revision as done instead.');

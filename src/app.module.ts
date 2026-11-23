@@ -40,6 +40,8 @@ import { CounselorAuditLogModule } from './modules/counselor-audit-log/counselor
 import { ProviderLevelingModule } from './modules/provider-leveling/provider-leveling.module';
 import { LegalEscalationModule } from './modules/legal-escalation/legal-escalation.module';
 import { LocationsModule } from './modules/locations/locations.module';
+import { CatalogModule } from './modules/catalog/catalog.module';
+import { OrderQuoteModule } from './modules/order-quote/order-quote.module';
 
 @Module({
   imports: [
@@ -49,6 +51,8 @@ import { LocationsModule } from './modules/locations/locations.module';
     RedisModule,
     AuthModule,
     ServiceModule,
+    CatalogModule,
+    OrderQuoteModule,
     ChatModule,
     SupportChatModule,
     ProviderServiceAreasModule,

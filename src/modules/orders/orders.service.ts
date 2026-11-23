@@ -40,7 +40,11 @@ export class OrdersService {
    * `serviceLocation` is where the work will be done (the customer's choice on the order, not their
    * profile address). It decides which providers hear about the order.
    */
-  async create(data: CreateCustomOrderDto, user?: { id: string; role: UserRole }, serviceLocation?: ServiceLocation) {
+  /**
+   * `options.serviceIds`: every sub-service of a cart order (providers must offer all of them).
+   * `options.isPricePending`: a customer's custom order, priced later by the provider's accepted quote.
+   */
+  async create(data: CreateCustomOrderDto, user?: { id: string; role: UserRole }, serviceLocation?: ServiceLocation, options: { serviceIds?: string[]; isPricePending?: boolean } = {}) {
     // A customer (or anyone else) can't choose the technician; only an admin assigns one.
     if (data.technicianId !== undefined) assertCanManageTechnicians(user?.role);
 
@@ -80,7 +84,7 @@ export class OrdersService {
     let isOfferedToGroup = false;
     if (!providerId) {
       const customerRow = await this.prisma.customerProfile.findUnique({ where: { id: customerId }, select: { userId: true } });
-      const eligibleIds = await this.dispatch.findEligibleProviderIds({ serviceId: data.serviceId, customerUserId: customerRow?.userId, location: serviceLocation });
+      const eligibleIds = await this.dispatch.findEligibleProviderIds({ serviceId: data.serviceId, serviceIds: options.serviceIds, customerUserId: customerRow?.userId, location: serviceLocation });
       if (eligibleIds.length === 0) {
         throw new BadRequestException(
           serviceLocation
@@ -102,6 +106,8 @@ export class OrdersService {
     // chat tab, assignee and lifecycle, so nothing here limits how many are active.
 
     const prices = calculateOrderPrices(data);
+    // The main service decides which chat the order is a tab of.
+    const serviceRow = await this.prisma.service.findUnique({ where: { id: data.serviceId }, select: { categoryId: true } });
 
     const createdOrder = await createWithUniqueReference((referenceCode) =>
       this.prisma.order.create({
@@ -111,13 +117,15 @@ export class OrdersService {
           customerId,
           technicianId: data.technicianId,
           serviceId: data.serviceId,
+          categoryId: serviceRow?.categoryId ?? null,
+          isPricePending: options.isPricePending ?? false,
           ...prices,
         },
         include: ORDER_RELATIONS_INCLUDE,
       }),
     );
 
-    if (isOfferedToGroup) await this.dispatch.dispatchNextWave(createdOrder.id, serviceLocation);
+    if (isOfferedToGroup) await this.dispatch.dispatchNextWave(createdOrder.id, serviceLocation, options.serviceIds);
     return createdOrder;
   }
 
