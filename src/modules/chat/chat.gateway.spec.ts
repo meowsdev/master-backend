@@ -10,6 +10,12 @@ import { RedisService } from '../../redis/redis.service';
 import { Namespace, Socket } from 'socket.io';
 
 describe('ChatGateway access control', () => {
+  // The gateway reads the signing secret from the environment; set it here so this file does not depend on
+  // another test (or a local .env) having set it first.
+  beforeAll(() => {
+    process.env.JWT_ACCESS_SECRET = 'test-secret';
+  });
+
   const userId = 'user-1';
   const conversationId = 'conversation-1';
   let gateway: ChatGateway;
