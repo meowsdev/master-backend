@@ -282,3 +282,16 @@ export class CustomerCustomOrderDto extends OrderPlaceFieldsDto {
   @MaxLength(1000)
   description!: string;
 }
+
+/** A cart an admin orders for a customer, identified by phone number (created as a customer if new). */
+export class AdminPlaceCartOrderDto extends PlaceCartOrderDto {
+  @ApiProperty({ example: '+8801712345678', description: 'The customer; created as a customer account if the number is new' })
+  @IsPhoneNumber()
+  customerPhone!: string;
+
+  @ApiPropertyOptional({ maxLength: 100 })
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  customerName?: string;
+}

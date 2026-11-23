@@ -100,6 +100,12 @@ export class UpdateMainServiceCatalogDto {
   @IsOptional()
   @IsInt()
   sortOrder?: number;
+
+  /** false = unpublished: customers do not see it (staff still do). */
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsBoolean()
+  isActive?: boolean;
 }
 
 /** Overview / Details of one sub-service; empty lists fall back to the main service's. */
@@ -130,6 +136,12 @@ export class UpdateSubServiceCatalogDto {
   @IsOptional()
   @IsInt()
   sortOrder?: number;
+
+  /** false = unpublished: customers do not see it (staff still do). */
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsBoolean()
+  isActive?: boolean;
 }
 
 export class CreateVariantDto {

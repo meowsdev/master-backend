@@ -76,7 +76,8 @@ export class CatalogService {
         groupId: true,
         group: { select: { id: true, name: true, nameBn: true } },
         services: {
-          where: { ...LIVE, isCustom: false },
+          // A package shows only while it has a published option.
+          where: { ...LIVE, isCustom: false, variants: { some: LIVE } },
           select: {
             basePrice: true,
             variants: {
@@ -119,8 +120,25 @@ export class CatalogService {
         imageUrl: true,
         groupId: true,
         group: { select: { id: true, name: true, nameBn: true } },
+        // The main service's own Overview, FAQ, How to order and Details, shown when its chat is opened.
+        included: true,
+        excluded: true,
+        details: true,
+        howToOrder: true,
+        faqs: {
+          where: { isActive: true, serviceId: null },
+          orderBy: { sortOrder: 'asc' },
+          select: {
+            id: true,
+            question: true,
+            questionBn: true,
+            answer: true,
+            answerBn: true,
+          },
+        },
         services: {
-          where: { ...LIVE, isCustom: false },
+          // A package shows only while it has a published option.
+          where: { ...LIVE, isCustom: false, variants: { some: LIVE } },
           orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
           select: {
             id: true,
@@ -149,6 +167,9 @@ export class CatalogService {
     return {
       ...category,
       ...stats.get(category.id),
+      howToOrder: category.howToOrder.length
+        ? category.howToOrder
+        : DEFAULT_HOW_TO_ORDER,
       services: category.services.map((service) => {
         const start = startingPrice(service.variants, service.basePrice);
         return {
@@ -168,7 +189,13 @@ export class CatalogService {
   /** Right-hand panel of one sub-service: variants, Overview, FAQ, How to order, Review and Details. */
   async getSubService(id: string) {
     const service = await this.prisma.service.findFirst({
-      where: { id, ...LIVE, isCustom: false, category: { is: LIVE } },
+      where: {
+        id,
+        ...LIVE,
+        isCustom: false,
+        category: { is: LIVE },
+        variants: { some: LIVE },
+      },
       select: {
         id: true,
         name: true,
@@ -257,6 +284,8 @@ export class CatalogService {
         excluded: ownOrInherited(excluded, category.excluded),
       },
       faqs: [...faqs, ...category.faqs],
+      // This package's own notes or disclaimer, shown under its options (details below may be inherited).
+      packageDetails: details || null,
       howToOrder: category.howToOrder.length
         ? category.howToOrder
         : DEFAULT_HOW_TO_ORDER,

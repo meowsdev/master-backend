@@ -5,7 +5,7 @@ import { Prisma, PriceUnit, UserRole } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { LocationsService } from '../locations/locations.service';
 import { OrdersService } from '../orders/orders.service';
-import { AdminCustomOrderDto, AdminPlaceOrderDto, CustomerCustomOrderDto, OrderPlaceFieldsDto, PlaceCartOrderDto, PlaceOrderDto, QuoteCartDto, QuoteOrderDto } from './dto/place-order.dto';
+import { AdminCustomOrderDto, AdminPlaceCartOrderDto, AdminPlaceOrderDto, CustomerCustomOrderDto, OrderPlaceFieldsDto, PlaceCartOrderDto, PlaceOrderDto, QuoteCartDto, QuoteOrderDto } from './dto/place-order.dto';
 import { ensureCustomService } from './custom-service';
 import { ensureCategoryCustomService } from '../catalog/catalog-custom';
 import { calculateCartQuote, calculateQuote, PriceLine, PricedAnswer } from './order-pricing';
@@ -311,6 +311,13 @@ export class OrderPlacementService {
    * A cart of one main service's options becomes one order (one chat tab). Its first sub-service is the order's
    * service for older screens; every option is an order item, and only providers offering all of them are asked.
    */
+  /** An admin orders a cart for a customer by phone number; then it is exactly the customer's own cart order. */
+  async placeCartOrderForCustomer(dto: AdminPlaceCartOrderDto) {
+    const { customerPhone, customerName, ...cart } = dto;
+    const customerId = await this.resolveCustomerForAdmin(customerPhone, customerName);
+    return this.placeCartOrder(cart, { id: customerId, role: UserRole.CUSTOMER });
+  }
+
   async placeCartOrder(dto: PlaceCartOrderDto, user: { id: string; role: UserRole }) {
     assertNoPhoneNumber(dto.description);
     const { picked, quote } = await this.priceCart(dto);

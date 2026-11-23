@@ -140,6 +140,14 @@ export class CatalogAdminService {
       where: { id, isDeleted: false },
     });
     if (!current) throw new NotFoundException('Option not found');
+    // A package always keeps at least one option; to hide the last one, unpublish it instead.
+    const others = await this.prisma.serviceVariant.count({
+      where: { serviceId: current.serviceId, isDeleted: false, id: { not: id } },
+    });
+    if (others === 0)
+      throw new BadRequestException(
+        'A package needs at least one option. Unpublish it instead of deleting.',
+      );
     const variant = await this.prisma.serviceVariant.update({
       where: { id },
       data: { isDeleted: true, isActive: false, deletedAt: new Date() },
