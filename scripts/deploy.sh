@@ -15,6 +15,11 @@ pnpm install --frozen-lockfile
 echo "==> Database migrations"
 pnpm exec prisma migrate deploy
 
+# Always regenerate the Prisma client from the schema just pulled. `pnpm install` skips its work (and the postinstall
+# `prisma generate`) when the lockfile has not changed, which left the server building against an old client.
+echo "==> Prisma client"
+pnpm exec prisma generate
+
 echo "==> Build"
 pnpm build
 
