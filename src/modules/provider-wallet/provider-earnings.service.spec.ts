@@ -21,7 +21,8 @@ function build(walletBalance = -150) {
       aggregate: jest.fn().mockResolvedValue({ _count: 2, _sum: { totalPrice: 3000, adminCommission: 300 } }),
     },
   };
-  return { service: new ProviderEarningsService(prisma as never), prisma };
+  const withdrawals = { balance: jest.fn().mockResolvedValue({ availableForWithdrawal: 0, pendingClearance: 0, pendingWithdrawal: 0, withdrawn: 0, minWithdrawal: 500 }) };
+  return { service: new ProviderEarningsService(prisma as never, withdrawals as never), prisma, withdrawals };
 }
 
 describe('ProviderEarningsService', () => {
@@ -42,6 +43,13 @@ describe('ProviderEarningsService', () => {
     expect(summary.expectedEarnings).toBe(2700);
     expect(summary.activeOrders).toBe(2);
     expect(summary.dueAmount).toBe(150);
+  });
+
+  it('adds the withdraw card from the wallet', async () => {
+    const { service, withdrawals } = build(900);
+    const result = await service.earnings('user-1', NOW);
+    expect(withdrawals.balance).toHaveBeenCalledWith('p1', 900, NOW);
+    expect(result.wallet).toMatchObject({ balance: 900, minWithdrawal: 500 });
   });
 
   it('shows the last six months oldest first, empty months included', async () => {

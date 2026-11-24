@@ -2,6 +2,7 @@ import { BadRequestException, ConflictException, ForbiddenException, Injectable,
 import { ConfirmationStatus, ExtraChargeStatus, OrderStatus, PaymentMode, PaymentStatus, Prisma, UserRole } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { commissionFor, handleCommissionBalance } from '../orders/orders.helpers';
+import { changeWalletBalance, creditOnlineMoney } from '../provider-wallet/wallet-ledger';
 import { completionStamp } from '../orders/order-view';
 import { CompleteOrderDto, FinishRevisionDto, PayOnlineDto } from './dto/order-completion.dto';
 import { PaymentGateway } from './payment-gateway';
@@ -74,7 +75,7 @@ export class OrderCompletionService {
 
     // Cash: the provider collected the due amount on site, so the order closes without the customer doing anything.
     return this.prisma.$transaction((tx) =>
-      this.finishOrder(tx, order, { paymentMode: PaymentMode.CASH, tipAmount: dto.tipAmount ?? 0, deductCommission: true }),
+      this.finishOrder(tx, order, { paymentMode: PaymentMode.CASH, tipAmount: dto.tipAmount ?? 0 }),
     );
   }
 
@@ -127,7 +128,7 @@ export class OrderCompletionService {
       await tx.serviceRevision.updateMany({ where: openRevisions, data: record });
       if (isMoneyDue) {
         // Cash for the extras, collected on site.
-        await this.finishOrder(tx, order, { paymentMode: PaymentMode.CASH, tipAmount: 0, deductCommission: true });
+        await this.finishOrder(tx, order, { paymentMode: PaymentMode.CASH, tipAmount: 0 });
       } else {
         await tx.serviceRevision.updateMany({ where: openRevisions, data: { revisionStatus: 'COMPLETED', completedAt: new Date() } });
         await tx.order.update({ where: { id: orderId }, data: { orderStatus: OrderStatus.COMPLETED } });
@@ -169,27 +170,36 @@ export class OrderCompletionService {
       });
       if (claimed.count === 0) throw new ConflictException('This payment was already made');
 
-      return this.finishOrder(tx, order, { paymentMode: dto.method, tipAmount, deductCommission: false });
+      return this.finishOrder(tx, order, { paymentMode: dto.method, tipAmount });
     });
   }
 
   /**
-   * Settle the bill in full and close the order.
-   * Platform commission leaves the provider's wallet only for cash (COD); online money reaches the
-   * platform first, so only the completed-orders counter moves.
+   * Settle the bill in full and close the order. The provider's wallet (see wallet-ledger.ts):
+   * - the online money of this settlement comes in: an online advance (first settlement only), and for an
+   *   online payment the amount paid now plus the tip. Cash and a cash tip stay with the provider;
+   * - the platform's commission of this settlement goes out, cash or online.
+   * A cash job therefore leaves a due; an online job leaves the provider's share, withdrawable after clearance.
    */
   private async finishOrder(
     tx: Tx,
     order: Awaited<ReturnType<OrderCompletionService['loadOrder']>>,
-    settlement: { paymentMode: PaymentMode; tipAmount: number; deductCommission: boolean },
+    settlement: { paymentMode: PaymentMode; tipAmount: number },
   ) {
     const totalPrice = Number(order.totalPrice);
+    const isCash = settlement.paymentMode === PaymentMode.CASH;
     // Settled once already: this pays only the extra charges added during a revision. The first
     // settlement's commission, completed-orders count, tip and completion time all stay as they were.
     const isRevisionSettlement = Boolean(order.completedAt);
     const tipTotal = (isRevisionSettlement ? Number(order.paymentAndTip?.tipAmount ?? 0) : 0) + settlement.tipAmount;
 
-    if (isRevisionSettlement && settlement.deductCommission) await this.deductRevisionCommission(tx, order);
+    // Online money in first, then the commission out (both set the negative-balance block on the result).
+    const onlineAdvance = isRevisionSettlement ? 0 : await this.onlineAdvanceTotal(tx, order.id);
+    const onlineNow = isCash ? 0 : Number(order.dueAmount) + settlement.tipAmount;
+    const commission = isRevisionSettlement ? await this.revisionExtrasCommission(tx, order) : Number(order.adminCommission);
+    await creditOnlineMoney(tx, { providerId: order.providerId, orderId: order.id, onlineAmount: onlineAdvance + onlineNow, commission });
+
+    if (isRevisionSettlement && commission > 0) await changeWalletBalance(tx, order.providerId, -commission);
 
     await tx.serviceRevision.updateMany({
       where: { orderId: order.id, revisionStatus: { in: [...OPEN_REVISION_STATUSES] } },
@@ -204,7 +214,7 @@ export class OrderCompletionService {
         tipAmount: tipTotal,
         hasTip: tipTotal > 0,
         confirmationStatus: ConfirmationStatus.CONFIRMED,
-        customerConfirmedAt: settlement.deductCommission ? null : new Date(),
+        customerConfirmedAt: isCash ? null : new Date(),
       },
       create: {
         orderId: order.id,
@@ -228,35 +238,31 @@ export class OrderCompletionService {
       },
     });
 
-    const commissionOrder = settlement.deductCommission ? order : { ...order, adminCommission: 0 };
+    // First settlement: the order's whole commission leaves the wallet and the completed count goes up.
     // Returns at once for a revision settlement (completedAt is set): that commission was handled above.
-    await handleCommissionBalance(tx, commissionOrder, OrderStatus.COMPLETED);
+    await handleCommissionBalance(tx, order, OrderStatus.COMPLETED);
 
     return payment;
   }
 
+  /** Advance payments are always made online (bKash, Nagad, card), so the platform holds them. */
+  private async onlineAdvanceTotal(tx: Tx, orderId: string): Promise<number> {
+    const result = await tx.orderAdvancePayment.aggregate({ where: { orderId }, _sum: { amount: true } });
+    return Number(result._sum.amount ?? 0);
+  }
+
   /**
-   * Cash for extra charges added during a revision: the platform's share of those extras only (the same
-   * share applyDecision added to adminCommission) leaves the provider's wallet. The first job's commission
-   * was taken at the first completion.
+   * The platform's share of the extra charges added during the open revision (the same share applyDecision
+   * added to adminCommission). The first job's commission was taken at the first completion.
    */
-  private async deductRevisionCommission(tx: Tx, order: Awaited<ReturnType<OrderCompletionService['loadOrder']>>) {
+  private async revisionExtrasCommission(tx: Tx, order: Awaited<ReturnType<OrderCompletionService['loadOrder']>>): Promise<number> {
     const revision = order.revisions.find((item) => (OPEN_REVISION_STATUSES as readonly string[]).includes(item.revisionStatus));
-    if (!revision) return;
+    if (!revision) return 0;
 
     const extras = await tx.extraChargeRequest.findMany({
       where: { orderId: order.id, status: ExtraChargeStatus.APPROVED, createdAt: { gte: revision.createdAt } },
       select: { totalAmount: true },
     });
-    const commission = extras.reduce((sum, extra) => sum + commissionFor(Number(extra.totalAmount), order.commissionRate), 0);
-    if (commission <= 0) return;
-
-    const provider = await tx.providerProfile.findUnique({ where: { id: order.providerId }, select: { walletBalance: true } });
-    if (!provider) return;
-    const newBalance = Number(provider.walletBalance) - commission;
-    await tx.providerProfile.update({
-      where: { id: order.providerId },
-      data: { walletBalance: newBalance, isAvailable: newBalance >= 0, isBlockedForNegative: newBalance < 0 },
-    });
+    return extras.reduce((sum, extra) => sum + commissionFor(Number(extra.totalAmount), order.commissionRate), 0);
   }
 }

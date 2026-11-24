@@ -92,9 +92,11 @@ export class OrderExpenseClaimService {
     const commissionBefore = Number(order.adminCommission);
     const commissionAfter = commissionAfterExpenses({ totalPrice, adminCommission: commissionBefore }, approvedTotal);
     // Cash (or a job closed without a payment record): the commission was taken into the provider's due.
-    // Online: the platform holds the money, so only the order's commission changes.
+    // Online: since online money reaches the wallet (a WalletCredit), its commission leaves the wallet too.
+    // An online job settled before that only had the platform keep the commission, so only the order changes.
     const paymentMode = order.paymentAndTip?.paymentMode;
-    const wasChargedToWallet = !paymentMode || paymentMode === 'CASH';
+    const wasChargedToWallet =
+      !paymentMode || paymentMode === 'CASH' || (await this.prisma.walletCredit.count({ where: { orderId: order.id } })) > 0;
 
     return this.prisma.$transaction(async (tx) => {
       // The PENDING guard makes a double click (or two admins) apply the claim once.

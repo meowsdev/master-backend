@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { OrderStatus, PaymentMode } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { ProviderWithdrawalService } from './provider-withdrawal.service';
 
 /** Months shown in the monthly breakdown, this month included. */
 const MONTHS_SHOWN = 6;
@@ -14,17 +15,20 @@ const monthKey = (date: Date) => `${date.getFullYear()}-${String(date.getMonth()
 /**
  * The provider's earnings page. A job's income is its bill minus the platform's commission, plus the tip.
  * Cash jobs: the provider collected the money and owes the commission (the wallet due). Online jobs: the
- * platform received the money.
+ * platform received the money and the provider's share went into the wallet (see wallet-ledger.ts).
  */
 @Injectable()
 export class ProviderEarningsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly withdrawals: ProviderWithdrawalService,
+  ) {}
 
   async earnings(userId: string, now = new Date()) {
     const provider = await this.prisma.providerProfile.findUnique({ where: { userId }, select: { id: true, walletBalance: true } });
     if (!provider) throw new NotFoundException('Provider profile not found');
 
-    const [completed, active] = await Promise.all([
+    const [completed, active, wallet] = await Promise.all([
       this.prisma.order.findMany({
         where: { providerId: provider.id, orderStatus: OrderStatus.COMPLETED },
         select: {
@@ -44,6 +48,7 @@ export class ProviderEarningsService {
         _count: true,
         _sum: { totalPrice: true, adminCommission: true },
       }),
+      this.withdrawals.balance(provider.id, Number(provider.walletBalance), now),
     ]);
 
     const rows = completed
@@ -106,6 +111,8 @@ export class ProviderEarningsService {
         // A negative wallet is what the provider owes the platform.
         dueAmount: balance < 0 ? -balance : 0,
       },
+      // The withdraw card: what can be withdrawn now, what is still clearing, waiting and already paid out.
+      wallet: { balance, ...wallet },
       monthly,
       transactions: rows.slice(0, TRANSACTIONS_SHOWN).map((row) => ({ ...row, paymentMode: row.isCash ? 'CASH' : 'ONLINE' })),
     };

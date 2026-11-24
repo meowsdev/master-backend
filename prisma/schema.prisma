@@ -246,6 +246,8 @@ model ProviderProfile {
   assignmentsReceived OrderAssignmentLog[]
   providerReviews     ProviderReview[]
   customerRetentions  CustomerRetention[]
+  walletCredits       WalletCredit[]
+  withdrawalRequests  WithdrawalRequest[]
 }
 
 model CounselorProfile {
@@ -675,6 +677,7 @@ model Order {
   advancePayments OrderAdvancePayment[]
   offers          OrderOffer[]
   assignmentLog   OrderAssignmentLog[]
+  walletCredits   WalletCredit[]
 
   @@index([providerId])
   @@index([customerId])
@@ -1087,4 +1090,67 @@ model OrderExpenseClaim {
 
   @@index([orderId])
   @@index([status])
+}
+
+enum PayoutMethod {
+  BKASH
+  NAGAD
+  BANK
+}
+
+enum WithdrawalStatus {
+  /// Waiting for an admin; the amount is already held out of the wallet.
+  PENDING
+  /// An admin sent the money (transactionRef says where).
+  PAID
+  /// An admin turned it down; the amount went back to the wallet.
+  REJECTED
+  /// The provider took it back; the amount went back to the wallet.
+  CANCELLED
+}
+
+/// The provider's share of online money for one settlement of an order (online advance, online payment and
+/// online tip, minus the commission). It is in the wallet at once but can only be withdrawn from availableAt
+/// (the clearance period), like "pending clearance" on Fiverr.
+model WalletCredit {
+  id          String   @id @default(uuid())
+  providerId  String
+  orderId     String
+  amount      Decimal  @db.Decimal(10, 2)
+  availableAt DateTime
+  createdAt   DateTime @default(now())
+
+  provider ProviderProfile @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  order    Order           @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([providerId, availableAt])
+  @@index([orderId])
+}
+
+/// A provider asks for money in their wallet to be sent to bKash, Nagad or a bank account. An admin pays it
+/// outside the app and marks it paid, or rejects it.
+model WithdrawalRequest {
+  id             String           @id @default(uuid())
+  providerId     String
+  amount         Decimal          @db.Decimal(10, 2)
+  method         PayoutMethod
+  accountNumber  String           @db.VarChar(40)
+  accountName    String           @db.VarChar(100)
+  /// BANK only.
+  bankName       String?          @db.VarChar(100)
+  branchName     String?          @db.VarChar(100)
+  status         WithdrawalStatus @default(PENDING)
+  /// The bKash / Nagad / bank transaction id the admin sent the money with.
+  transactionRef String?          @db.VarChar(100)
+  /// Why it was rejected, or a note on the payment.
+  reviewNote     String?          @db.Text
+  reviewedById   String?
+  reviewedAt     DateTime?
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  provider ProviderProfile @relation(fields: [providerId], references: [id], onDelete: Cascade)
+
+  @@index([providerId])
+  @@index([status, createdAt])
 }

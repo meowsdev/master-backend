@@ -5,7 +5,20 @@ import { PaymentGateway } from './payment-gateway';
 const PROVIDER = { id: 'provider-user', role: 'PROVIDER' as const };
 const CUSTOMER = { id: 'customer-user', role: 'CUSTOMER' as const };
 
-function build(orderOverrides: Record<string, unknown> = {}) {
+/** A provider wallet that remembers its balance, so a test can check where the money ended up. */
+function walletMock(start: number) {
+  const wallet = { balance: start };
+  const update = jest.fn(({ data }: { data: { walletBalance?: number | { increment: number } } }) => {
+    if (typeof data.walletBalance === 'number') wallet.balance = data.walletBalance;
+    else if (data.walletBalance) wallet.balance += data.walletBalance.increment;
+    return Promise.resolve({ walletBalance: wallet.balance });
+  });
+  const findUnique = jest.fn(() => Promise.resolve({ id: 'provider-profile', walletBalance: wallet.balance }));
+  return { wallet, providerProfile: { findUnique, update } };
+}
+
+function build(orderOverrides: Record<string, unknown> = {}, { advance = 0 } = {}) {
+  const { wallet, providerProfile } = walletMock(1000);
   const order = {
     id: 'order-1',
     orderStatus: 'IN_PROGRESS',
@@ -26,7 +39,10 @@ function build(orderOverrides: Record<string, unknown> = {}) {
     orderPaymentAndTip: { upsert: jest.fn().mockResolvedValue({}), update: jest.fn().mockResolvedValue({}), updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
     order: { update: jest.fn() },
     extraChargeRequest: { findMany: jest.fn().mockResolvedValue([]) },
-    providerProfile: { findUnique: jest.fn().mockResolvedValue({ id: 'provider-profile', walletBalance: 1000 }), update: jest.fn() },
+    providerProfile,
+    // Advance payments are online: the platform holds them until the order is settled.
+    orderAdvancePayment: { aggregate: jest.fn().mockResolvedValue({ _sum: { amount: advance } }) },
+    walletCredit: { create: jest.fn() },
   };
   const prisma = {
     order: { findUnique: jest.fn().mockResolvedValue(order) },
@@ -36,7 +52,7 @@ function build(orderOverrides: Record<string, unknown> = {}) {
   };
   const gateway = { charge: jest.fn().mockResolvedValue({ success: true, transactionId: 'T1' }) };
   const service = new OrderCompletionService(prisma as never, gateway as unknown as PaymentGateway);
-  return { service, prisma, tx, gateway };
+  return { service, prisma, tx, gateway, wallet };
 }
 
 describe('OrderCompletionService', () => {
@@ -46,11 +62,20 @@ describe('OrderCompletionService', () => {
   });
 
   it('completes a cash order at once and settles the bill', async () => {
-    const { service, tx } = build();
+    const { service, tx, wallet } = build();
     await service.complete('order-1', { paymentMode: 'CASH' }, PROVIDER);
     expect(tx.order.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ orderStatus: 'COMPLETED', paymentStatus: 'PAID', dueAmount: 0 }) }));
-    // COD: the platform commission leaves the provider's wallet.
-    expect(tx.providerProfile.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ walletBalance: 710 }) }));
+    // COD: the platform commission leaves the provider's wallet; nothing online comes in.
+    expect(wallet.balance).toBe(710);
+    expect(tx.walletCredit.create).not.toHaveBeenCalled();
+  });
+
+  it("gives a cash job's online advance to the provider, less the commission", async () => {
+    const { service, tx, wallet } = build({ advancePaid: 500, dueAmount: 2400 }, { advance: 500 });
+    await service.complete('order-1', { paymentMode: 'CASH' }, PROVIDER);
+    // +500 advance the platform holds, −290 commission.
+    expect(wallet.balance).toBe(1210);
+    expect(tx.walletCredit.create).toHaveBeenCalledWith({ data: expect.objectContaining({ orderId: 'order-1', amount: 210 }) });
   });
 
   it('only records an online request and leaves the order running', async () => {
@@ -98,13 +123,19 @@ describe('OrderCompletionService', () => {
     await expect(service.payOnline('order-1', { method: 'BKASH' }, CUSTOMER)).rejects.toBeInstanceOf(BadRequestException);
   });
 
-  it('charges due + tip, completes the order and keeps the wallet untouched', async () => {
-    const { service, gateway, tx } = build({ paymentAndTip: { paymentMode: 'ONLINE', confirmationStatus: 'PENDING' } });
+  it("charges due + tip, completes the order and puts the provider's share in the wallet", async () => {
+    const { service, gateway, tx, wallet } = build({ paymentAndTip: { paymentMode: 'ONLINE', confirmationStatus: 'PENDING' } });
+    const before = Date.now();
     await service.payOnline('order-1', { method: 'NAGAD', tipAmount: 100 }, CUSTOMER);
     expect(gateway.charge).toHaveBeenCalledWith({ method: 'NAGAD', amount: 3000, orderId: 'order-1' });
     expect(tx.order.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ orderStatus: 'COMPLETED' }) }));
-    // Online: only the completed-orders counter moves, no commission deduction.
-    expect(tx.providerProfile.update).toHaveBeenCalledWith({ where: { id: 'provider-profile' }, data: { totalCompletedOrders: { increment: 1 } } });
+    // +3000 received online (bill + tip), −290 commission.
+    expect(wallet.balance).toBe(3710);
+    const credit = tx.walletCredit.create.mock.calls[0][0].data;
+    expect(credit).toEqual(expect.objectContaining({ providerId: 'provider-profile', orderId: 'order-1', amount: 2710 }));
+    // Withdrawable after the 7-day clearance.
+    expect(credit.availableAt.getTime()).toBeGreaterThanOrEqual(before + 7 * 24 * 60 * 60 * 1000);
+    expect(tx.providerProfile.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ totalCompletedOrders: { increment: 1 } }) }));
   });
 
   it('does not complete twice when the payment was already claimed', async () => {
@@ -146,16 +177,17 @@ describe('OrderCompletionService', () => {
     });
 
     it('settles revision extras in cash: only their commission, warranty clock and tip kept', async () => {
-      const { service, tx } = build({ ...inRevision, dueAmount: 1500, totalPrice: 4400, adminCommission: 440 });
+      const { service, tx, wallet } = build({ ...inRevision, dueAmount: 1500, totalPrice: 4400, adminCommission: 440 });
       tx.extraChargeRequest.findMany.mockResolvedValue([{ totalAmount: 1500 }]);
       await service.finishRevision('order-1', { ...finishDto, paymentMode: 'CASH' }, PROVIDER);
 
       expect(tx.extraChargeRequest.findMany).toHaveBeenCalledWith(
         expect.objectContaining({ where: expect.objectContaining({ createdAt: { gte: revisionStart } }) }),
       );
-      // 10% of 1500 only; the first job's 290 was taken at the first completion.
-      expect(tx.providerProfile.update).toHaveBeenCalledTimes(1);
-      expect(tx.providerProfile.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ walletBalance: 850 }) }));
+      // 10% of 1500 only; the first job's 290 was taken at the first completion, and its advance not counted again.
+      expect(wallet.balance).toBe(850);
+      expect(tx.orderAdvancePayment.aggregate).not.toHaveBeenCalled();
+      expect(tx.walletCredit.create).not.toHaveBeenCalled();
       const orderData = tx.order.update.mock.calls[0][0].data;
       expect(orderData).toEqual(expect.objectContaining({ orderStatus: 'COMPLETED', dueAmount: 0, paymentStatus: 'PAID' }));
       expect(orderData.completedAt).toBeUndefined();
@@ -167,6 +199,15 @@ describe('OrderCompletionService', () => {
       await service.finishRevision('order-1', { ...finishDto, paymentMode: 'ONLINE' }, PROVIDER);
       expect(tx.orderPaymentAndTip.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ paymentMode: 'ONLINE' }) }));
       expect(tx.order.update).not.toHaveBeenCalled();
+    });
+
+    it('pays revision extras online: the extras less their commission go into the wallet', async () => {
+      const { service, tx, wallet } = build({ ...inRevision, dueAmount: 1500, totalPrice: 4400, paymentAndTip: { paymentMode: 'ONLINE', confirmationStatus: 'PENDING', tipAmount: 50 } });
+      tx.extraChargeRequest.findMany.mockResolvedValue([{ totalAmount: 1500 }]);
+      await service.payOnline('order-1', { method: 'BKASH' }, CUSTOMER);
+      // +1500 online, −150 commission on the extras; the first job is not counted again.
+      expect(wallet.balance).toBe(2350);
+      expect(tx.walletCredit.create).toHaveBeenCalledWith({ data: expect.objectContaining({ amount: 1350 }) });
     });
 
     it('will not finish while an extra-charge request is unanswered', async () => {

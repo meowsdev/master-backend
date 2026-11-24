@@ -5,7 +5,7 @@ const PROVIDER = { id: 'provider-user', role: 'PROVIDER' };
 const TECHNICIAN = { id: 'tech-user', role: 'TECHNICIAN' };
 const ADMIN = { id: 'admin-user', role: 'ADMIN' };
 
-function build(orderOverrides: Record<string, unknown> = {}, existingClaim: { status: string } | null = null) {
+function build(orderOverrides: Record<string, unknown> = {}, existingClaim: { status: string } | null = null, walletCredits = 0) {
   const order = {
     id: 'o1',
     totalPrice: 5000,
@@ -25,6 +25,8 @@ function build(orderOverrides: Record<string, unknown> = {}, existingClaim: { st
   };
   const prisma = {
     order: { findUnique: jest.fn().mockResolvedValue(order) },
+    // An online job settled since online money reaches the wallet has a credit; an older one has none.
+    walletCredit: { count: jest.fn().mockResolvedValue(walletCredits) },
     orderExpenseClaim: {
       findFirst: jest.fn().mockResolvedValue(existingClaim),
       findUnique: jest.fn().mockResolvedValue({ id: 'c1', orderId: 'o1' }),
@@ -91,11 +93,17 @@ describe('admin approval', () => {
     expect(tx.providerProfile.update).toHaveBeenCalledWith(expect.objectContaining({ data: { walletBalance: { increment: 200 } } }));
   });
 
-  it('only changes the commission of an online job (the platform holds that money)', async () => {
+  it('only changes the commission of an online job settled before wallet credits (the platform kept it)', async () => {
     const { service, tx } = build({ paymentAndTip: { paymentMode: 'BKASH' } });
     await service.approve('c1', reviewed, ADMIN);
     expect(tx.order.update).toHaveBeenCalledWith({ where: { id: 'o1' }, data: { adminCommission: 300 } });
     expect(tx.providerProfile.update).not.toHaveBeenCalled();
+  });
+
+  it('refunds the commission difference to the wallet of an online job whose commission left the wallet', async () => {
+    const { service, tx } = build({ paymentAndTip: { paymentMode: 'BKASH' } }, null, 1);
+    await service.approve('c1', reviewed, ADMIN);
+    expect(tx.providerProfile.update).toHaveBeenCalledWith(expect.objectContaining({ data: { walletBalance: { increment: 200 } } }));
   });
 
   it('refuses costs above the order total', async () => {
