@@ -6,6 +6,7 @@ import { PayDueDto } from './dto/pay-due.dto';
 import { ProviderWalletService } from './provider-wallet.service';
 import { ProviderEarningsService } from './provider-earnings.service';
 import { ProviderWithdrawalService } from './provider-withdrawal.service';
+import { AdminEarningsService } from './admin-earnings.service';
 import { ListWithdrawalsQuery, MarkWithdrawalPaidDto, RejectWithdrawalDto, RequestWithdrawalDto } from './dto/withdrawal.dto';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -69,6 +70,22 @@ export class ProviderWalletController {
   @ApiOperation({ summary: 'Take back a pending withdrawal; the amount returns to the wallet' })
   cancelWithdrawal(@Param('withdrawalId', new ParseUUIDPipe()) withdrawalId: string, @Req() req: AuthenticatedRequest) {
     return this.withdrawals.cancel(req.user.id, withdrawalId);
+  }
+}
+
+/** Admin: the platform's earnings (commission), what partners owe and what is owed to them. */
+@ApiTags('Admin earnings')
+@ApiBearerAuth('JWT-auth')
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Roles(UserRole.ADMIN)
+@Controller('admin/earnings')
+export class AdminEarningsController {
+  constructor(private readonly earnings: AdminEarningsService) {}
+
+  @Get()
+  @ApiOperation({ summary: 'Platform commission totals, last 6 months, per partner, and the partner wallets' })
+  report() {
+    return this.earnings.report();
   }
 }
 
