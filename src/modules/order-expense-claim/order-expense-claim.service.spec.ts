@@ -36,6 +36,8 @@ function build(orderOverrides: Record<string, unknown> = {}, { pending = 0, last
     orderExpenseClaim: { updateMany: jest.fn().mockResolvedValue({ count: 1 }), findUniqueOrThrow: jest.fn().mockResolvedValue({ id: 'c1' }) },
     order: { update: jest.fn() },
     providerProfile: { update: jest.fn().mockResolvedValue({ walletBalance: 200 }) },
+    // An online job's credit still in its clearance period (none for a cash job).
+    walletCredit: { findFirst: jest.fn().mockResolvedValue(walletCredits > 0 ? { id: 'credit1' } : null), update: jest.fn() },
   };
   const prisma = {
     order: { findUnique: jest.fn().mockResolvedValue(order) },
@@ -162,6 +164,19 @@ describe('admin approval', () => {
     const { service, tx } = build({ paymentAndTip: { paymentMode: 'BKASH' } }, { walletCredits: 1 });
     await service.approve('c1', reviewed, ADMIN);
     expect(tx.providerProfile.update).toHaveBeenCalledWith(expect.objectContaining({ data: { walletBalance: { increment: 200 } } }));
+  });
+
+  it("holds the refunded commission of an online job with the rest of its money until clearance", async () => {
+    // ৳6000 job paid by bKash: credit 6400 clearing. ৳2000 of parts approved → ৳200 back, which must clear with it.
+    const { service, tx } = build({ paymentAndTip: { paymentMode: 'BKASH' } }, { walletCredits: 1 });
+    await service.approve('c1', reviewed, ADMIN);
+    expect(tx.walletCredit.update).toHaveBeenCalledWith({ where: { id: 'credit1' }, data: { amount: { increment: 200 } } });
+  });
+
+  it('adds nothing to clearance for a cash job: the refund only lowers its due', async () => {
+    const { service, tx } = build();
+    await service.approve('c1', reviewed, ADMIN);
+    expect(tx.walletCredit.update).not.toHaveBeenCalled();
   });
 
   it('refuses costs above the order total', async () => {

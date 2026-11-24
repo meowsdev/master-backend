@@ -163,6 +163,18 @@ export class OrderExpenseClaimService {
         });
         const isNegative = Number(wallet.walletBalance) < 0;
         await tx.providerProfile.update({ where: { id: order.providerId }, data: { isBlockedForNegative: isNegative, isAvailable: !isNegative } });
+
+        // The commission given back is part of this order's online money, so it waits out the same clearance:
+        // added to the order's credit that is still clearing. Without this it was withdrawable at once while the
+        // rest of the order's money was still held. A credit already cleared leaves it withdrawable, as it should be.
+        if (refund > 0) {
+          const clearing = await tx.walletCredit.findFirst({
+            where: { orderId: order.id, providerId: order.providerId, availableAt: { gt: new Date() } },
+            orderBy: { availableAt: 'desc' },
+            select: { id: true },
+          });
+          if (clearing) await tx.walletCredit.update({ where: { id: clearing.id }, data: { amount: { increment: refund } } });
+        }
       }
 
       return tx.orderExpenseClaim.findUniqueOrThrow({ where: { id: claimId } });
