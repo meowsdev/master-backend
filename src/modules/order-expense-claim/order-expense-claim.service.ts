@@ -1,5 +1,5 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
-import { ExpenseClaimStatus, Prisma, RevisionStatus, UserRole } from '@prisma/client';
+import { ExpenseClaimStatus, ExtraChargeStatus, Prisma, RevisionStatus, UserRole } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { isOrderStaff } from '../auth/role-policy';
 import { commissionFor } from '../orders/orders.helpers';
@@ -48,25 +48,58 @@ export class OrderExpenseClaimService {
     return order;
   }
 
+  /** Costs already approved on this order, all claims added up. */
+  private async approvedCostsSoFar(orderId: string): Promise<number> {
+    const result = await this.prisma.orderExpenseClaim.aggregate({ where: { orderId, status: ExpenseClaimStatus.APPROVED }, _sum: { approvedTotal: true } });
+    return Number(result._sum.approvedTotal ?? 0);
+  }
+
+  /**
+   * Why costs cannot be sent now, or null when they can. Costs are sent once per billing: after the job, and
+   * again only when a revision billed extra work (an approved extra charge) after the last approval, so the
+   * parts of that extra work are taken out of its commission the same way.
+   */
+  private async submitBlock(order: Awaited<ReturnType<OrderExpenseClaimService['loadOrder']>>): Promise<{ reason: string; isConflict: boolean } | null> {
+    if (!order.completedAt) return { reason: 'Costs can be sent once the work is complete', isConflict: false };
+    // During a revision the job is reopened: parts found then are billed as an Extra Charge, sent here once it is done.
+    if (order.revisions.length > 0) return { reason: 'Costs cannot be sent while a revision is open', isConflict: false };
+
+    const [pending, lastApproved] = await Promise.all([
+      this.prisma.orderExpenseClaim.count({ where: { orderId: order.id, status: ExpenseClaimStatus.PENDING } }),
+      this.prisma.orderExpenseClaim.findFirst({ where: { orderId: order.id, status: ExpenseClaimStatus.APPROVED }, orderBy: { reviewedAt: 'desc' }, select: { reviewedAt: true, createdAt: true } }),
+    ]);
+    if (pending > 0) return { reason: 'Your costs are already waiting for admin review', isConflict: true };
+    if (lastApproved) {
+      const billedSince = await this.prisma.extraChargeRequest.count({
+        where: { orderId: order.id, status: ExtraChargeStatus.APPROVED, createdAt: { gt: lastApproved.reviewedAt ?? lastApproved.createdAt } },
+      });
+      if (billedSince === 0) return { reason: 'The costs of this order are already approved', isConflict: true };
+    }
+    return null;
+  }
+
+  /** For the app: whether the "send costs" button should show, and the costs approved so far. */
+  async status(orderId: string, actor: Actor) {
+    const order = await this.loadOrder(orderId);
+    const isWorkingOnOrder = order.provider.userId === actor.id || order.technician?.userId === actor.id;
+    if (!isWorkingOnOrder && !isOrderStaff(actor.role)) throw new ForbiddenException('You are not part of this order');
+    const [block, approvedCosts] = await Promise.all([this.submitBlock(order), this.approvedCostsSoFar(orderId)]);
+    return { canSubmit: block === null, reason: block?.reason ?? null, approvedCosts };
+  }
+
   async submit(orderId: string, dto: SubmitExpenseClaimDto, actor: Actor) {
     const order = await this.loadOrder(orderId);
     const isWorkingOnOrder = order.provider.userId === actor.id || order.technician?.userId === actor.id;
     if (!isWorkingOnOrder) throw new ForbiddenException('Only the provider or technician of this order can send its costs');
-    if (!order.completedAt) throw new BadRequestException('Costs can be sent once the work is complete');
-    // During a revision the job is reopened: parts found then are billed as an Extra Charge, not as costs.
-    if (order.revisions.length > 0) throw new BadRequestException('Costs cannot be sent while a revision is open');
-
-    const existing = await this.prisma.orderExpenseClaim.findFirst({
-      where: { orderId, status: { in: [ExpenseClaimStatus.PENDING, ExpenseClaimStatus.APPROVED] } },
-      select: { status: true },
-    });
-    if (existing?.status === ExpenseClaimStatus.PENDING) throw new ConflictException('Your costs are already waiting for admin review');
-    if (existing?.status === ExpenseClaimStatus.APPROVED) throw new ConflictException('The costs of this order are already approved');
+    const block = await this.submitBlock(order);
+    if (block) throw block.isConflict ? new ConflictException(block.reason) : new BadRequestException(block.reason);
 
     const items = cleanItems(dto.items);
     if (items.some((item) => item.amount <= 0)) throw new BadRequestException('Every cost needs an amount');
     const claimedTotal = sumOf(items);
-    if (claimedTotal > Number(order.totalPrice)) throw new BadRequestException('Costs cannot be more than the order total');
+    if ((await this.approvedCostsSoFar(orderId)) + claimedTotal > Number(order.totalPrice)) {
+      throw new BadRequestException('Costs cannot be more than the order total');
+    }
 
     return this.prisma.orderExpenseClaim.create({ data: { orderId, submittedById: actor.id, items, claimedTotal } });
   }
@@ -88,10 +121,13 @@ export class OrderExpenseClaimService {
     const approvedItems = cleanItems(dto.items);
     const approvedTotal = sumOf(approvedItems);
     const totalPrice = Number(order.totalPrice);
-    if (approvedTotal > totalPrice) throw new BadRequestException('Approved costs cannot be more than the order total');
+    // A second claim (parts of a revision's extra work) adds to the costs approved before it.
+    const earlierCosts = await this.approvedCostsSoFar(order.id);
+    if (earlierCosts + approvedTotal > totalPrice) throw new BadRequestException('Approved costs cannot be more than the order total');
 
     const commissionBefore = Number(order.adminCommission);
-    const commissionAfter = commissionAfterExpenses({ totalPrice, commissionRate: Number(order.commissionRate) }, approvedTotal);
+    // The whole bill (revision extras included) less every approved cost, at the order's percent.
+    const commissionAfter = commissionAfterExpenses({ totalPrice, commissionRate: Number(order.commissionRate) }, earlierCosts + approvedTotal);
     // Cash (or a job closed without a payment record): the commission was taken into the provider's due.
     // Online: since online money reaches the wallet (a WalletCredit), its commission leaves the wallet too.
     // An online job settled before that only had the platform keep the commission, so only the order changes.

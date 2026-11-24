@@ -25,6 +25,12 @@ export class OrderExpenseClaimController {
     return this.claims.submit(orderId, dto, req.user);
   }
 
+  @Get(':orderId/expense-claims/status')
+  @ApiOperation({ summary: 'Whether costs can be sent now (once per billing: the job, then each revision that billed extra work)' })
+  status(@Param('orderId', new ParseUUIDPipe()) orderId: string, @Req() req: AuthenticatedRequest) {
+    return this.claims.status(orderId, req.user);
+  }
+
   @Get(':orderId/expense-claims')
   @ApiOperation({ summary: "An order's cost claims (its provider / technician and staff)" })
   list(@Param('orderId', new ParseUUIDPipe()) orderId: string, @Req() req: AuthenticatedRequest) {

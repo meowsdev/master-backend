@@ -36,6 +36,13 @@ describe('OrderExtraChargeService.respond', () => {
     }));
   });
 
+  it("commissions extra work (a revision's too) at the provider's own percent", async () => {
+    const { service, tx } = build();
+    tx.order.findUniqueOrThrow.mockResolvedValue({ commissionRate: 30 });
+    await service.respond('r1', 'APPROVED', CUSTOMER);
+    expect(tx.order.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ adminCommission: { increment: 480 } }) }));
+  });
+
   it('changes nothing on the order when rejected', async () => {
     const { service, tx } = build();
     await service.respond('r1', 'REJECTED', CUSTOMER);
