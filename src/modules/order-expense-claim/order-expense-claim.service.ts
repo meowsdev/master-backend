@@ -2,6 +2,7 @@ import { BadRequestException, ConflictException, ForbiddenException, Injectable,
 import { ExpenseClaimStatus, Prisma, RevisionStatus, UserRole } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { isOrderStaff } from '../auth/role-policy';
+import { commissionFor } from '../orders/orders.helpers';
 import { ApproveExpenseClaimDto, ExpenseItemDto, SubmitExpenseClaimDto } from './dto/expense-claim.dto';
 
 type Actor = { id: string; role: UserRole | string };
@@ -10,19 +11,19 @@ const sumOf = (items: ExpenseItemDto[]) => Math.round(items.reduce((total, item)
 const cleanItems = (items: ExpenseItemDto[]) => items.map(({ label, amount }) => ({ label: label.trim(), amount }));
 
 /**
- * The platform commission once the job's costs are taken out. The order's own commission rate is kept
- * (10% by default, or whatever an admin set on the order), applied to (total - approved costs).
+ * The platform commission once the job's costs are taken out: the order's commission percent (the provider's,
+ * kept on the order when they got it) applied to the profit, (total - approved costs).
+ * E.g. a ৳5000 job with ৳2000 of parts at 30%: 30% of ৳3000 = ৳900.
  */
-export function commissionAfterExpenses(order: { totalPrice: number; adminCommission: number }, approvedExpenses: number): number {
-  if (order.totalPrice <= 0) return 0;
-  const rate = order.adminCommission / order.totalPrice;
-  return Math.max(0, Math.round((order.totalPrice - approvedExpenses) * rate));
+export function commissionAfterExpenses(order: { totalPrice: number; commissionRate: number }, approvedExpenses: number): number {
+  return commissionFor(Math.max(0, order.totalPrice - approvedExpenses), order.commissionRate);
 }
 
 const ORDER_SELECT = {
   id: true,
   totalPrice: true,
   adminCommission: true,
+  commissionRate: true,
   completedAt: true,
   providerId: true,
   provider: { select: { userId: true } },
@@ -90,7 +91,7 @@ export class OrderExpenseClaimService {
     if (approvedTotal > totalPrice) throw new BadRequestException('Approved costs cannot be more than the order total');
 
     const commissionBefore = Number(order.adminCommission);
-    const commissionAfter = commissionAfterExpenses({ totalPrice, adminCommission: commissionBefore }, approvedTotal);
+    const commissionAfter = commissionAfterExpenses({ totalPrice, commissionRate: Number(order.commissionRate) }, approvedTotal);
     // Cash (or a job closed without a payment record): the commission was taken into the provider's due.
     // Online: since online money reaches the wallet (a WalletCredit), its commission leaves the wallet too.
     // An online job settled before that only had the platform keep the commission, so only the order changes.

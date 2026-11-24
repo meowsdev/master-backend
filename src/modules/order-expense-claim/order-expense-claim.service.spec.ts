@@ -10,6 +10,7 @@ function build(orderOverrides: Record<string, unknown> = {}, existingClaim: { st
     id: 'o1',
     totalPrice: 5000,
     adminCommission: 500,
+    commissionRate: 10,
     completedAt: new Date('2026-11-21T10:00:00Z'),
     providerId: 'pp1',
     provider: { userId: PROVIDER.id },
@@ -41,11 +42,15 @@ const parts = { items: [{ label: '  Capacitor  ', amount: 1200 }, { label: 'Gas'
 
 describe('commission after costs', () => {
   it('takes the order rate (10%) of total minus costs', () => {
-    expect(commissionAfterExpenses({ totalPrice: 5000, adminCommission: 500 }, 2000)).toBe(300);
+    expect(commissionAfterExpenses({ totalPrice: 5000, commissionRate: 10 }, 2000)).toBe(300);
   });
 
-  it('keeps a custom rate an admin set on the order', () => {
-    expect(commissionAfterExpenses({ totalPrice: 5000, adminCommission: 750 }, 2000)).toBe(450);
+  it("uses the provider's own percent: ৳5000 job, ৳2000 parts, 30% → ৳900", () => {
+    expect(commissionAfterExpenses({ totalPrice: 5000, commissionRate: 30 }, 2000)).toBe(900);
+  });
+
+  it('never goes below zero', () => {
+    expect(commissionAfterExpenses({ totalPrice: 5000, commissionRate: 30 }, 5000)).toBe(0);
   });
 });
 

@@ -20,6 +20,7 @@ import {
 import {
   ORDER_RELATIONS_INCLUDE,
   calculateOrderPrices,
+  commissionFor,
   handleCommissionBalance,
   providerCommissionPercent,
   assertProvider,
@@ -323,10 +324,16 @@ export class OrdersService {
     }
 
     const originalPrice = data.originalPrice ?? Number(order.originalPrice);
-    const adminCommission =
-      data.adminCommission ?? Number(order.adminCommission);
     const additionalPrice =
       data.additionalPrice ?? Number(order.additionalPrice);
+    // A new price brings a new commission at the order's own percent; keeping the old amount would charge
+    // the wrong share (and make expense approval work from it). An explicit adminCommission still wins.
+    const isAmountChanged = data.originalPrice !== undefined || data.additionalPrice !== undefined;
+    const adminCommission =
+      data.adminCommission ??
+      (isAmountChanged
+        ? commissionFor(originalPrice + additionalPrice, order.commissionRate)
+        : Number(order.adminCommission));
     const advancePaid = data.advancePaid ?? Number(order.advancePaid);
 
     const prices = calculateOrderPrices({
@@ -455,7 +462,8 @@ export class OrdersService {
     const order = await this.findOne(id);
 
     const originalPrice = Number(order.originalPrice);
-    const adminCommission = Number(order.adminCommission);
+    // The extra price is dropped, so is its commission: back to the order's percent of the original price.
+    const adminCommission = commissionFor(originalPrice, order.commissionRate);
     const advancePaid = Number(order.advancePaid);
 
     const prices = calculateOrderPrices({
