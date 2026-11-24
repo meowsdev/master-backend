@@ -94,12 +94,12 @@ enum PaymentStatus {
   REFUNDED
 }
 
+/// Level 0 -> Level 1 -> Level 2 -> Top Rated (rules in provider-leveling/level-rules.ts, targets in LevelSetting).
 enum ProviderLevel {
-  NEW
-  BRONZE
-  SILVER
-  GOLD
-  PLATINUM
+  LEVEL_0
+  LEVEL_1
+  LEVEL_2
+  TOP_RATED
 }
 
 enum KycStatus {
@@ -225,7 +225,11 @@ model ProviderProfile {
   /// Shown to customers in order tabs; has priority over the username.
   companyName          String?       @db.VarChar(120)
   totalCompletedOrders Int           @default(0)
-  level                ProviderLevel @default(NEW)
+  level                ProviderLevel @default(LEVEL_0)
+  /// Set by an admin: the monthly evaluation leaves this provider's level as it is.
+  isLevelLocked        Boolean       @default(false)
+  /// Why the admin set the level by hand (shown to the provider).
+  levelLockReason      String?       @db.VarChar(300)
   experienceYears      Int           @default(0)
   isAvailable          Boolean       @default(true)
   monthlyEarnings      Decimal       @default(0.0) @db.Decimal(10, 2)
@@ -1172,4 +1176,19 @@ model DueReminder {
   provider ProviderProfile @relation(fields: [providerId], references: [id], onDelete: Cascade)
 
   @@index([providerId, createdAt])
+}
+
+/// What one provider level needs (Level 1, Level 2, Top Rated; Level 0 needs nothing). An admin edits these;
+/// the monthly evaluation and every Level page read them. Meanings in provider-leveling/level-rules.ts.
+model LevelSetting {
+  level         ProviderLevel @id
+  successScore  Decimal       @db.Decimal(3, 1)
+  rating        Decimal       @db.Decimal(3, 2)
+  responseRate  Int
+  orders        Int
+  uniqueClients Int
+  /// Net earnings in taka.
+  earnings      Int
+  updatedAt     DateTime      @updatedAt
+  updatedById   String?
 }
