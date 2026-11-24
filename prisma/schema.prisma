@@ -248,6 +248,7 @@ model ProviderProfile {
   customerRetentions  CustomerRetention[]
   walletCredits       WalletCredit[]
   withdrawalRequests  WithdrawalRequest[]
+  dueReminders        DueReminder[]
 }
 
 model CounselorProfile {
@@ -1153,4 +1154,22 @@ model WithdrawalRequest {
 
   @@index([providerId])
   @@index([status, createdAt])
+}
+
+/// A reminder to a provider to clear their due (the cash jobs' commission they owe). Sent into their support chat
+/// and live to their open app, by staff or by the daily automatic run.
+model DueReminder {
+  id          String   @id @default(uuid())
+  providerId  String
+  /// The due when the reminder went out.
+  amount      Decimal  @db.Decimal(10, 2)
+  message     String   @db.Text
+  /// null = the daily automatic run.
+  sentById    String?
+  isAutomatic Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  provider ProviderProfile @relation(fields: [providerId], references: [id], onDelete: Cascade)
+
+  @@index([providerId, createdAt])
 }

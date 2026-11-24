@@ -1,6 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { IsIn, IsInt, IsNotEmpty, IsOptional, IsString, Matches, MaxLength, Min, ValidateIf } from 'class-validator';
+import { ArrayMaxSize, IsArray, IsIn, IsInt, IsNotEmpty, IsOptional, IsString, IsUUID, Matches, MaxLength, Min, ValidateIf } from 'class-validator';
 
 export const PAYOUT_METHODS = ['BKASH', 'NAGAD', 'BANK'] as const;
 export const WITHDRAWAL_STATUSES = ['PENDING', 'PAID', 'REJECTED', 'CANCELLED'] as const;
@@ -73,4 +73,20 @@ export class RejectWithdrawalDto {
   @IsNotEmpty()
   @MaxLength(500)
   reason!: string;
+}
+
+/** Staff remind the chosen providers of their due, or everyone who owes when none are chosen. */
+export class SendDueReminderDto {
+  @ApiPropertyOptional({ type: [String] })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(500)
+  @IsUUID('4', { each: true })
+  providerIds?: string[];
+
+  @ApiPropertyOptional({ description: 'Own words; the due amount is added after them' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  message?: string;
 }

@@ -7,7 +7,8 @@ import { ProviderWalletService } from './provider-wallet.service';
 import { ProviderEarningsService } from './provider-earnings.service';
 import { ProviderWithdrawalService } from './provider-withdrawal.service';
 import { AdminEarningsService } from './admin-earnings.service';
-import { ListWithdrawalsQuery, MarkWithdrawalPaidDto, RejectWithdrawalDto, RequestWithdrawalDto } from './dto/withdrawal.dto';
+import { DueReminderService } from './due-reminder.service';
+import { ListWithdrawalsQuery, MarkWithdrawalPaidDto, RejectWithdrawalDto, RequestWithdrawalDto, SendDueReminderDto } from './dto/withdrawal.dto';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { RolesGuard } from '../auth/guards/roles.guard';
 
@@ -70,6 +71,35 @@ export class ProviderWalletController {
   @ApiOperation({ summary: 'Take back a pending withdrawal; the amount returns to the wallet' })
   cancelWithdrawal(@Param('withdrawalId', new ParseUUIDPipe()) withdrawalId: string, @Req() req: AuthenticatedRequest) {
     return this.withdrawals.cancel(req.user.id, withdrawalId);
+  }
+}
+
+/** Staff: providers who owe (their due) and reminders to pay it. */
+@ApiTags('Admin dues')
+@ApiBearerAuth('JWT-auth')
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Roles(UserRole.ADMIN, UserRole.MANAGER)
+@Controller('admin/dues')
+export class AdminDuesController {
+  constructor(private readonly reminders: DueReminderService) {}
+
+  @Get()
+  @ApiOperation({ summary: 'Every provider who owes, largest due first, with when they were last reminded' })
+  list() {
+    return this.reminders.listDues();
+  }
+
+  @Get(':providerId/reminders')
+  @ApiOperation({ summary: "One provider's reminder history" })
+  history(@Param('providerId', new ParseUUIDPipe()) providerId: string) {
+    return this.reminders.history(providerId);
+  }
+
+  @Post('remind')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Remind the chosen providers (or everyone who owes) in their Support chat and live in their app' })
+  remind(@Body() dto: SendDueReminderDto, @Req() req: AuthenticatedRequest) {
+    return this.reminders.remind(req.user.id, { providerIds: dto.providerIds, message: dto.message });
   }
 }
 
