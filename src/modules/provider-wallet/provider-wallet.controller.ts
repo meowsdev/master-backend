@@ -4,6 +4,9 @@ import { UserRole } from '@prisma/client';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { PayDueDto } from './dto/pay-due.dto';
 import { ProviderWalletService } from './provider-wallet.service';
+import { ProviderEarningsService } from './provider-earnings.service';
+import { Roles } from '../auth/decorators/roles.decorator';
+import { RolesGuard } from '../auth/guards/roles.guard';
 
 interface AuthenticatedRequest {
   user: { id: string; role: UserRole };
@@ -14,7 +17,18 @@ interface AuthenticatedRequest {
 @UseGuards(JwtAuthGuard)
 @Controller('provider-wallet')
 export class ProviderWalletController {
-  constructor(private readonly wallet: ProviderWalletService) {}
+  constructor(
+    private readonly wallet: ProviderWalletService,
+    private readonly earningsService: ProviderEarningsService,
+  ) {}
+
+  @Get('me/earnings')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.PROVIDER)
+  @ApiOperation({ summary: "The signed-in provider's earnings: totals, last 6 months and recent completed jobs" })
+  earnings(@Req() req: AuthenticatedRequest) {
+    return this.earningsService.earnings(req.user.id);
+  }
 
   @Get('me')
   @ApiOperation({ summary: "The signed-in provider's wallet and what they owe the platform" })

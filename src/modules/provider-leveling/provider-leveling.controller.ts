@@ -1,4 +1,4 @@
-import { Controller, Get, Post, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Req, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { ProviderLevelingService } from './provider-leveling.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -23,6 +23,15 @@ export class ProviderLevelingController {
   @Post('trigger')
   triggerLeveling() {
     return this.providerLevelingService.runLevelingProcess();
+  }
+
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({ summary: "The signed-in provider's level, progress and what the next level needs" })
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.PROVIDER)
+  @Get('me')
+  myLevel(@Req() req: { user: { id: string } }) {
+    return this.providerLevelingService.getMyLevel(req.user.id);
   }
 
   @ApiBearerAuth('JWT-auth')
