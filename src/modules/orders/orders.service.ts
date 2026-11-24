@@ -21,6 +21,7 @@ import {
   ORDER_RELATIONS_INCLUDE,
   calculateOrderPrices,
   handleCommissionBalance,
+  providerCommissionPercent,
   assertProvider,
   assertCustomer,
   assertService,
@@ -105,7 +106,10 @@ export class OrdersService {
     // A customer may run several orders of the same service at once; each order has its own
     // chat tab, assignee and lifecycle, so nothing here limits how many are active.
 
-    const prices = calculateOrderPrices(data);
+    // The provider's own commission percent. For an order offered to a group this is the stand-in's; it is
+    // worked out again for whoever accepts (OrderDispatchService.closeOffersAfterAcceptance).
+    const commissionPercent = await providerCommissionPercent(this.prisma, providerId);
+    const prices = { ...calculateOrderPrices({ ...data, commissionPercent }), commissionRate: commissionPercent };
     // The main service decides which chat the order is a tab of.
     const serviceRow = await this.prisma.service.findUnique({ where: { id: data.serviceId }, select: { categoryId: true } });
 

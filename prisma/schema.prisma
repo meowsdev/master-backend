@@ -230,6 +230,8 @@ model ProviderProfile {
   isAvailable          Boolean       @default(true)
   monthlyEarnings      Decimal       @default(0.0) @db.Decimal(10, 2)
   walletBalance        Decimal       @default(0.0) @db.Decimal(10, 2)
+  /// The platform's share of this provider's jobs, in percent (10 = 10%). An admin sets it per provider.
+  commissionRate       Decimal       @default(10.0) @db.Decimal(5, 2)
   isBlockedForNegative Boolean       @default(false)
   createdAt            DateTime      @default(now())
   updatedAt            DateTime      @updatedAt
@@ -642,6 +644,9 @@ model Order {
   isPricePending  Boolean       @default(false)
   originalPrice   Decimal       @db.Decimal(10, 2)
   adminCommission Decimal       @default(0.0) @db.Decimal(10, 2)
+  /// The provider's commission percent when they got the order. Extras and quotes on this order use it,
+  /// so an admin changing the provider's rate later does not change a running order.
+  commissionRate  Decimal       @default(10.0) @db.Decimal(5, 2)
   additionalPrice Decimal       @default(0.0) @db.Decimal(10, 2)
   totalPrice      Decimal       @db.Decimal(10, 2)
   priceEditCount  Int           @default(0)

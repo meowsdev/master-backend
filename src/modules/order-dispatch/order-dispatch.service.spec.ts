@@ -11,10 +11,13 @@ function build(options: { orderStatus?: string; offers?: Offer[]; eligible?: str
   const order = { orderStatus: options.orderStatus ?? 'PENDING', serviceId: 's1', customer: { userId: 'customer-user' }, bookingDetail: options.location ?? null, offers: options.offers ?? [] };
   const tx = {
     $queryRaw: jest.fn(),
-    order: { findUnique: jest.fn().mockResolvedValue(order) },
+    order: { findUnique: jest.fn().mockResolvedValue({ ...order, totalPrice: 2000 }), update: jest.fn() },
     // The order's service: a catalog one, or the hidden custom service an admin's typed order hangs off.
     service: { findUnique: jest.fn().mockResolvedValue({ slug: options.isCustomService ? CUSTOM_SERVICE_SLUG : 'ac-servicing' }) },
-    providerProfile: { findMany: jest.fn().mockResolvedValue((options.eligible ?? ['p1', 'p2', 'p3']).map((id) => ({ id }))) },
+    providerProfile: {
+      findMany: jest.fn().mockResolvedValue((options.eligible ?? ['p1', 'p2', 'p3']).map((id) => ({ id }))),
+      findUnique: jest.fn().mockResolvedValue({ commissionRate: 15 }),
+    },
     orderOffer: { createMany: jest.fn(), updateMany: jest.fn() },
   };
   const providerProfile = { findMany: tx.providerProfile.findMany, findUnique: jest.fn() };
@@ -113,6 +116,13 @@ describe('OrderDispatchService', () => {
       await service.closeOffersAfterAcceptance(tx as never, 'o1', 'p2');
       expect(tx.orderOffer.updateMany).toHaveBeenNthCalledWith(1, expect.objectContaining({ where: { orderId: 'o1', providerId: 'p2' }, data: expect.objectContaining({ status: 'ACCEPTED' }) }));
       expect(tx.orderOffer.updateMany).toHaveBeenNthCalledWith(2, expect.objectContaining({ where: { orderId: 'o1', providerId: { not: 'p2' }, status: 'OFFERED' }, data: expect.objectContaining({ status: 'WITHDRAWN' }) }));
+    });
+
+    it("puts the order on the accepting provider's own commission percent", async () => {
+      const { service, tx } = build();
+      await service.closeOffersAfterAcceptance(tx as never, 'o1', 'p2');
+      expect(tx.providerProfile.findUnique).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 'p2' } }));
+      expect(tx.order.update).toHaveBeenCalledWith({ where: { id: 'o1' }, data: { commissionRate: 15, adminCommission: 300 } });
     });
   });
 

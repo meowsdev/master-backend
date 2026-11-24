@@ -10,6 +10,7 @@ const order = (overrides: Record<string, unknown> = {}) => ({
   orderStatus: 'ACCEPTED',
   isPricePending: true,
   advancePaid: 0,
+  commissionRate: 12,
   customer: { userId: 'cust' },
   provider: { userId: 'prov' },
   technician: null,
@@ -91,7 +92,8 @@ describe('OrderQuoteService', () => {
     await service.respond('q1', 'ACCEPTED', customer);
     expect(tx.order.update).toHaveBeenCalledWith({
       where: { id: 'o1' },
-      data: acceptedQuotePrices(2000, 0),
+      // The order's own commission percent (12%), not the default.
+      data: acceptedQuotePrices(2000, 0, 12),
     });
   });
 
@@ -118,7 +120,9 @@ describe('OrderQuoteService', () => {
       isPricePending: false,
       originalPrice: 2000,
       totalPrice: 2000,
+      adminCommission: 200,
       dueAmount: 1500,
     });
+    expect(acceptedQuotePrices(2000, 500, 15)).toMatchObject({ adminCommission: 300 });
   });
 });

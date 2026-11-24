@@ -6,6 +6,7 @@ import {
 import { MessageType, PaymentMode } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { findFreeReferenceCode } from '../orders/order-reference';
+import { commissionFor, providerCommissionPercent } from '../orders/orders.helpers';
 import { SENDER_SELECT, withSenderDisplayName } from './message-sender';
 import { userDisplayName } from '../../common/contact-privacy';
 
@@ -90,7 +91,8 @@ export class ChatBookingService {
       }
 
       const originalPrice = data.customPrice ?? Number(service.basePrice);
-      const adminCommission = Math.round(originalPrice * 0.1);
+      const commissionRate = await providerCommissionPercent(tx, providerProfileId);
+      const adminCommission = commissionFor(originalPrice, commissionRate);
       const totalPrice = originalPrice;
 
       // 4. Create Order
@@ -102,6 +104,7 @@ export class ChatBookingService {
           serviceId: service.id,
           originalPrice,
           adminCommission,
+          commissionRate,
           totalPrice,
           advancePaid: 0,
           dueAmount: totalPrice,

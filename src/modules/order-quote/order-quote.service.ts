@@ -8,7 +8,7 @@ import {
 import { OrderStatus, Prisma, QuoteStatus, UserRole } from '@prisma/client';
 import { assertNoPhoneNumber } from '../../common/contact-privacy';
 import { isOrderStaff } from '../auth/role-policy';
-import { COMMISSION_RATE } from '../orders/orders.helpers';
+import { DEFAULT_COMMISSION_PERCENT, commissionFor } from '../orders/orders.helpers';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateOrderQuoteDto } from './dto/create-order-quote.dto';
 
@@ -29,6 +29,7 @@ const ORDER_SELECT = {
   orderStatus: true,
   isPricePending: true,
   advancePaid: true,
+  commissionRate: true,
   customer: { select: { userId: true } },
   provider: { select: { userId: true } },
   technician: { select: { userId: true } },
@@ -150,6 +151,7 @@ export class OrderQuoteService {
           data: acceptedQuotePrices(
             Number(quote.totalAmount),
             Number(order.advancePaid),
+            Number(order.commissionRate),
           ),
         });
       } else {
@@ -163,16 +165,17 @@ export class OrderQuoteService {
   }
 }
 
-/** The order's price fields once the customer accepts a quote. The platform's share is commissioned like any order. */
+/** The order's price fields once the customer accepts a quote. The platform's share uses the order's commission percent. */
 export function acceptedQuotePrices(
   total: number,
   advancePaid: number,
+  commissionPercent: number = DEFAULT_COMMISSION_PERCENT,
 ): Prisma.OrderUpdateInput {
   return {
     isPricePending: false,
     originalPrice: total,
     totalPrice: total,
-    adminCommission: Math.round(total * COMMISSION_RATE),
+    adminCommission: commissionFor(total, commissionPercent),
     dueAmount: Math.max(0, total - advancePaid),
   };
 }

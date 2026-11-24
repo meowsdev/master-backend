@@ -6,7 +6,8 @@ function build() {
   const request = { id: 'r1', orderId: 'o1', totalAmount: 1600, status: 'PENDING' };
   const tx = {
     extraChargeRequest: { updateMany: jest.fn().mockResolvedValue({ count: 1 }), findUniqueOrThrow: jest.fn().mockResolvedValue(request) },
-    order: { update: jest.fn() },
+    // The order's own commission percent (the provider's when they got it).
+    order: { update: jest.fn(), findUniqueOrThrow: jest.fn().mockResolvedValue({ commissionRate: 10 }) },
   };
   const prisma = {
     extraChargeRequest: { findUnique: jest.fn().mockResolvedValue(request) },

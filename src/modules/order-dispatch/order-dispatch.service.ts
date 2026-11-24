@@ -3,6 +3,7 @@ import { OfferStatus, OrderStatus, Prisma, UserRole } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { USER_EVENT_PUBLISHER } from './user-events';
 import { isCustomServiceId } from '../order-placement/custom-service';
+import { commissionFor, providerCommissionPercent } from '../orders/orders.helpers';
 import type { UserEventPublisher } from './user-events';
 
 /** How many providers hear about a new order at once. */
@@ -200,6 +201,14 @@ export class OrderDispatchService {
    */
   async closeOffersAfterAcceptance(tx: Tx, orderId: string, acceptedProviderId: string): Promise<void> {
     const now = new Date();
+    // The order now runs on the accepting provider's own commission percent (it was the stand-in's until now).
+    const [percent, order] = await Promise.all([
+      providerCommissionPercent(tx, acceptedProviderId),
+      tx.order.findUnique({ where: { id: orderId }, select: { totalPrice: true } }),
+    ]);
+    if (order) {
+      await tx.order.update({ where: { id: orderId }, data: { commissionRate: percent, adminCommission: commissionFor(Number(order.totalPrice), percent) } });
+    }
     await tx.orderOffer.updateMany({ where: { orderId, providerId: acceptedProviderId }, data: { status: OfferStatus.ACCEPTED, respondedAt: now } });
     await tx.orderOffer.updateMany({ where: { orderId, providerId: { not: acceptedProviderId }, status: OfferStatus.OFFERED }, data: { status: OfferStatus.WITHDRAWN, respondedAt: now } });
   }

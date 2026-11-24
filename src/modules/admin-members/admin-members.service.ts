@@ -93,6 +93,16 @@ export class AdminMembersService {
     return { ...base, customer: await this.customerSection(memberId) };
   }
 
+  /**
+   * Sets a provider's own commission percent. New orders, and orders they accept from now on, use it; an order
+   * they already have keeps the percent it was given (Order.commissionRate).
+   */
+  async setCommission(memberId: string, commissionRate: number) {
+    const updated = await this.prisma.providerProfile.updateMany({ where: { userId: memberId }, data: { commissionRate } });
+    if (updated.count === 0) throw new NotFoundException('Provider not found');
+    return this.getDetails(memberId);
+  }
+
   async moderate(actor: Actor, memberId: string, action: ModerationAction, reason?: string) {
     if (actor.id === memberId) throw new ForbiddenException('You cannot moderate your own account');
     const isBanAction = action === 'BAN' || action === 'UNBAN';
@@ -165,6 +175,7 @@ export class AdminMembersService {
         isAvailable: true,
         isBlockedForNegative: true,
         walletBalance: true,
+        commissionRate: true,
         totalCompletedOrders: true,
         kyc: { select: { status: true } },
         serviceAreas: { select: { districtId: true, upazilaId: true } },
@@ -186,6 +197,7 @@ export class AdminMembersService {
     return {
       ...rest,
       rating: Number(rest.rating),
+      commissionRate: Number(rest.commissionRate),
       // A negative wallet is what the provider owes the platform.
       dueAmount: Number(walletBalance) < 0 ? -Number(walletBalance) : 0,
       skillCount: skills,

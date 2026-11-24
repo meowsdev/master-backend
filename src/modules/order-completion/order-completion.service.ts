@@ -1,7 +1,7 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { ConfirmationStatus, ExtraChargeStatus, OrderStatus, PaymentMode, PaymentStatus, Prisma, UserRole } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
-import { COMMISSION_RATE, handleCommissionBalance } from '../orders/orders.helpers';
+import { commissionFor, handleCommissionBalance } from '../orders/orders.helpers';
 import { completionStamp } from '../orders/order-view';
 import { CompleteOrderDto, FinishRevisionDto, PayOnlineDto } from './dto/order-completion.dto';
 import { PaymentGateway } from './payment-gateway';
@@ -18,6 +18,7 @@ const ORDER_SELECT = {
   advancePaid: true,
   dueAmount: true,
   adminCommission: true,
+  commissionRate: true,
   providerId: true,
   // Set once the order was first settled; a later settlement only pays for revision extras.
   completedAt: true,
@@ -247,7 +248,7 @@ export class OrderCompletionService {
       where: { orderId: order.id, status: ExtraChargeStatus.APPROVED, createdAt: { gte: revision.createdAt } },
       select: { totalAmount: true },
     });
-    const commission = extras.reduce((sum, extra) => sum + Math.round(Number(extra.totalAmount) * COMMISSION_RATE), 0);
+    const commission = extras.reduce((sum, extra) => sum + commissionFor(Number(extra.totalAmount), order.commissionRate), 0);
     if (commission <= 0) return;
 
     const provider = await tx.providerProfile.findUnique({ where: { id: order.providerId }, select: { walletBalance: true } });

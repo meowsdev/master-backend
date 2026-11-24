@@ -1,7 +1,7 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { ExtraChargeStatus, OrderStatus, Prisma, UserRole } from '@prisma/client';
 import { assertNoPhoneNumber } from '../../common/contact-privacy';
-import { COMMISSION_RATE } from '../orders/orders.helpers';
+import { commissionFor } from '../orders/orders.helpers';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateExtraChargeDto } from './dto/create-extra-charge.dto';
 import { isOrderStaff } from '../auth/role-policy';
@@ -153,11 +153,12 @@ export class OrderExtraChargeService {
     if (claimed.count === 0) throw new ConflictException('This request was already answered');
 
     if (decision === 'APPROVED') {
+      const { commissionRate } = await tx.order.findUniqueOrThrow({ where: { id: orderId }, select: { commissionRate: true } });
       await tx.order.update({
         where: { id: orderId },
         data: {
-          // The platform's share grows with the job: approved extra work is commissioned like the rest.
-          adminCommission: { increment: Math.round(Number(request.totalAmount) * COMMISSION_RATE) },
+          // The platform's share grows with the job: approved extra work is commissioned at the order's own rate.
+          adminCommission: { increment: commissionFor(Number(request.totalAmount), commissionRate) },
           additionalPrice: { increment: request.totalAmount },
           totalPrice: { increment: request.totalAmount },
           dueAmount: { increment: request.totalAmount },

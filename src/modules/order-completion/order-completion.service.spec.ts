@@ -13,6 +13,7 @@ function build(orderOverrides: Record<string, unknown> = {}) {
     advancePaid: 0,
     dueAmount: 2900,
     adminCommission: 290,
+    commissionRate: 10,
     providerId: 'provider-profile',
     customer: { userId: CUSTOMER.id, user: { isVerified: true } },
     provider: { userId: PROVIDER.id },

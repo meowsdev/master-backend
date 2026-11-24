@@ -76,12 +76,32 @@ export const ORDER_RELATIONS_INCLUDE = {
   customerRating: { select: { rating: true, comment: true, createdAt: true } },
 } satisfies Prisma.OrderInclude;
 
-/** The platform keeps 10% of every job; on cash jobs the provider owes it, on online jobs the platform already holds it. */
-export const COMMISSION_RATE = 0.1;
+/**
+ * The platform keeps a share of every job; on cash jobs the provider owes it, on online jobs the platform already
+ * holds it. Each provider has their own percent (ProviderProfile.commissionRate, set by an admin); this is the
+ * percent a new provider starts with.
+ */
+export const DEFAULT_COMMISSION_PERCENT = 10;
+
+/** The platform's share of `amount` at `percent` (10 = 10%), in whole taka. */
+export function commissionFor(amount: number, percent: number | Prisma.Decimal): number {
+  return Math.round((amount * Number(percent)) / 100);
+}
+
+/** The commission percent a provider is on now. */
+export async function providerCommissionPercent(
+  client: { providerProfile: { findUnique: Prisma.TransactionClient['providerProfile']['findUnique'] } },
+  providerId: string,
+): Promise<number> {
+  const provider = await client.providerProfile.findUnique({ where: { id: providerId }, select: { commissionRate: true } });
+  return provider ? Number(provider.commissionRate) : DEFAULT_COMMISSION_PERCENT;
+}
 
 export interface PriceCalculationInput {
   originalPrice: number;
   adminCommission?: number;
+  /** Used when adminCommission is not given. */
+  commissionPercent?: number;
   additionalPrice?: number;
   advancePaid?: number;
 }
@@ -91,7 +111,7 @@ export function calculateOrderPrices(data: PriceCalculationInput) {
   const adminCommission =
     data.adminCommission !== undefined
       ? data.adminCommission
-      : Math.round(originalPrice * COMMISSION_RATE);
+      : commissionFor(originalPrice, data.commissionPercent ?? DEFAULT_COMMISSION_PERCENT);
   const additionalPrice = data.additionalPrice ?? 0;
   const advancePaid = data.advancePaid ?? 0;
   const totalPrice = originalPrice + additionalPrice;
