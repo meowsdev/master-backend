@@ -6,6 +6,10 @@ export const REVIEWS_SHOWN = 20;
 
 /** One review as a profile lists it: the order, the stars, what was written and who wrote it. */
 export interface ReceivedReview {
+  /** The review itself (customer reviews only; ratings providers gave a customer have none). */
+  reviewId?: string;
+  /** Whether customers see it (an admin can hide a customer review). */
+  isPublic?: boolean;
   orderId: string;
   referenceCode: string;
   rating: number;
@@ -21,6 +25,8 @@ export async function reviewsFromCustomers(prisma: PrismaService, where: Prisma.
     orderBy: { createdAt: 'desc' },
     take: REVIEWS_SHOWN,
     select: {
+      id: true,
+      isPublic: true,
       orderId: true,
       customerRating: true,
       reviewComment: true,
@@ -30,6 +36,8 @@ export async function reviewsFromCustomers(prisma: PrismaService, where: Prisma.
     },
   });
   return rows.map((row) => ({
+    reviewId: row.id,
+    isPublic: row.isPublic,
     orderId: row.orderId,
     referenceCode: row.order.referenceCode,
     rating: row.customerRating,

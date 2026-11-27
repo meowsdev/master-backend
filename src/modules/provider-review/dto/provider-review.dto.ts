@@ -95,3 +95,10 @@ export class UpdateProviderReviewDto {
   @IsEnum(UserStatus)
   status?: UserStatus;
 }
+
+/** Admin: whether customers see this review. */
+export class ReviewVisibilityDto {
+  @ApiProperty()
+  @IsBoolean()
+  isPublic!: boolean;
+}

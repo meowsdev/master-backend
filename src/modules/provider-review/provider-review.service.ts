@@ -53,8 +53,9 @@ export class ProviderReviewService {
     await this.assertCustomer(customerId);
 
     const isPositive = data.customerRating >= 4;
-    const isPublic = isPositive;
-    const moderationStatus = isPositive ? 'APPROVED' : 'PENDING';
+    // Every review is public as soon as it is given, whatever the stars; an admin can hide one (setVisibility).
+    const isPublic = true;
+    const moderationStatus = 'APPROVED';
     const continueWithProvider = isPositive
       ? (data.continueWithProvider ?? true)
       : false;
@@ -108,28 +109,38 @@ export class ProviderReviewService {
             removedReason: 'Auto-removed due to negative review (Rating <= 3)',
           },
         });
-      } else {
-        const agg = await tx.providerReview.aggregate({
-          where: {
-            providerId,
-            isPublic: true,
-            moderationStatus: 'APPROVED',
-          },
-          _avg: {
-            customerRating: true,
-          },
-        });
-
-        if (agg._avg.customerRating !== null) {
-          await tx.providerProfile.update({
-            where: { id: providerId },
-            data: {
-              rating: Number(agg._avg.customerRating.toFixed(2)),
-            },
-          });
-        }
       }
+      // The provider's average follows every public review, low ones included.
+      await this.recomputeRating(tx, providerId);
       return review;
+    });
+  }
+
+  /** The provider's stored rating: the average of their public, approved reviews (unchanged when none). */
+  private async recomputeRating(tx: Prisma.TransactionClient, providerId: string) {
+    const agg = await tx.providerReview.aggregate({
+      where: { providerId, isPublic: true, moderationStatus: 'APPROVED', status: 'ACTIVE' },
+      _avg: { customerRating: true },
+    });
+    if (agg._avg.customerRating !== null) {
+      await tx.providerProfile.update({ where: { id: providerId }, data: { rating: Number(agg._avg.customerRating.toFixed(2)) } });
+    }
+  }
+
+  /**
+   * Admin: show or hide one review everywhere customers see reviews (service pages, the provider's rating). Hiding
+   * takes it out of the provider's average; showing it again puts it back.
+   */
+  async setVisibility(id: string, isPublic: boolean) {
+    await this.findOne(id);
+    return this.prisma.$transaction(async (tx) => {
+      const review = await tx.providerReview.update({
+        where: { id },
+        data: { isPublic, ...(isPublic ? { moderationStatus: 'APPROVED' as const } : {}) },
+        select: { id: true, isPublic: true, providerId: true },
+      });
+      await this.recomputeRating(tx, review.providerId);
+      return { id: review.id, isPublic: review.isPublic };
     });
   }
 
@@ -247,11 +258,16 @@ export class ProviderReviewService {
     return { message: 'Provider review deleted successfully' };
   }
 
+  /**
+   * What a review answer carries about its order and people: names and pictures only. (It used to carry their whole
+   * user rows, phone numbers and emails included.)
+   */
   private includeRelations() {
+    const person = { select: { id: true, name: true, username: true, profilePhoto: true } };
     return {
-      order: true,
-      provider: { include: { user: true } },
-      customer: { include: { user: true } },
+      order: { select: { id: true, referenceCode: true, orderStatus: true, completedAt: true } },
+      provider: { select: { id: true, companyName: true, user: person } },
+      customer: { select: { id: true, user: person } },
     };
   }
 
