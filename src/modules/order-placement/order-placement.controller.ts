@@ -78,8 +78,8 @@ export class OrderPlacementController {
   @ApiBearerAuth('JWT-auth')
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({ summary: 'ADMIN: order a service that is not in the catalog (typed main service, sub-service, details, price)' })
-  placeCustomForCustomer(@Body() dto: AdminCustomOrderDto) {
-    return this.placement.placeCustomOrderForCustomer(dto);
+  async placeCustomForCustomer(@Body() dto: AdminCustomOrderDto, @Req() req: AuthenticatedRequest) {
+    return this.placement.placeCustomOrderForCustomer(dto, await this.placement.originFor(req.user));
   }
 
   @Post('admin/cart')
@@ -88,8 +88,8 @@ export class OrderPlacementController {
   @ApiBearerAuth('JWT-auth')
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({ summary: "ADMIN: order a cart of options for a customer by phone number (name optional)" })
-  placeCartForCustomer(@Body() dto: AdminPlaceCartOrderDto) {
-    return this.placement.placeCartOrderForCustomer(dto);
+  async placeCartForCustomer(@Body() dto: AdminPlaceCartOrderDto, @Req() req: AuthenticatedRequest) {
+    return this.placement.placeCartOrderForCustomer(dto, await this.placement.originFor(req.user));
   }
 
   @Post('admin')
@@ -98,7 +98,42 @@ export class OrderPlacementController {
   @ApiBearerAuth('JWT-auth')
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({ summary: 'ADMIN: place an order for a customer by phone number' })
-  placeForCustomer(@Body() dto: AdminPlaceOrderDto) {
-    return this.placement.placeOrderForCustomer(dto);
+  async placeForCustomer(@Body() dto: AdminPlaceOrderDto, @Req() req: AuthenticatedRequest) {
+    return this.placement.placeOrderForCustomer(dto, await this.placement.originFor(req.user));
+  }
+
+  /*
+   * A provider books for their own customer by phone number, with the same forms as an admin. The order is
+   * theirs at once (never offered to other providers) and is charged by the admin's provider-order rule.
+   * There is no customer lookup for providers: they must not read other people's names and addresses.
+   */
+  @Post('provider/custom')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.PROVIDER)
+  @ApiBearerAuth('JWT-auth')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({ summary: 'PROVIDER: own order for a service not in the catalog' })
+  async providerPlaceCustom(@Body() dto: AdminCustomOrderDto, @Req() req: AuthenticatedRequest) {
+    return this.placement.placeCustomOrderForCustomer(dto, await this.placement.originFor(req.user));
+  }
+
+  @Post('provider/cart')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.PROVIDER)
+  @ApiBearerAuth('JWT-auth')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({ summary: 'PROVIDER: own order of a cart for a customer by phone number' })
+  async providerPlaceCart(@Body() dto: AdminPlaceCartOrderDto, @Req() req: AuthenticatedRequest) {
+    return this.placement.placeCartOrderForCustomer(dto, await this.placement.originFor(req.user));
+  }
+
+  @Post('provider')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.PROVIDER)
+  @ApiBearerAuth('JWT-auth')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({ summary: 'PROVIDER: own order for a customer by phone number' })
+  async providerPlace(@Body() dto: AdminPlaceOrderDto, @Req() req: AuthenticatedRequest) {
+    return this.placement.placeOrderForCustomer(dto, await this.placement.originFor(req.user));
   }
 }

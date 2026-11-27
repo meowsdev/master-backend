@@ -5,7 +5,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { UserRole, OrderStatus } from '@prisma/client';
+import { UserRole, OrderStatus, OrderCreator } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { OrderDispatchService, ServiceLocation } from '../order-dispatch/order-dispatch.service';
 import { assertCanManageTechnicians, isOrderStaff } from '../auth/role-policy';
@@ -13,6 +13,7 @@ import { createWithUniqueReference } from './order-reference';
 import { acceptanceStamp, completionStamp } from './order-view';
 import { CreateCustomOrderDto } from './dto/create-custom-order.dto';
 import { isCustomServiceId } from '../order-placement/custom-service';
+import { providerOrderChargePercent, readProviderOrderCharge } from '../platform-settings/platform-settings.service';
 import {
   UpdateOrderDto,
   UpdateOrderStatusDto,
@@ -28,6 +29,16 @@ import {
   assertService,
   assertTechnician,
 } from './orders.helpers';
+
+/**
+ * Who created an order, recorded on it as a tag. `ownProviderId`: a provider creating an order for their own
+ * customer; it is given to that provider directly and charged by the admin's provider-order rule.
+ */
+export interface OrderOrigin {
+  createdByRole: OrderCreator;
+  createdById: string;
+  ownProviderId?: string;
+}
 
 /** Platform staff who may read any order. */
 
@@ -46,7 +57,7 @@ export class OrdersService {
    * `options.serviceIds`: every sub-service of a cart order (providers must offer all of them).
    * `options.isPricePending`: a customer's custom order, priced later by the provider's accepted quote.
    */
-  async create(data: CreateCustomOrderDto, user?: { id: string; role: UserRole }, serviceLocation?: ServiceLocation, options: { serviceIds?: string[]; isPricePending?: boolean } = {}) {
+  async create(data: CreateCustomOrderDto, user?: { id: string; role: UserRole }, serviceLocation?: ServiceLocation, options: { serviceIds?: string[]; isPricePending?: boolean; origin?: OrderOrigin } = {}) {
     // A customer (or anyone else) can't choose the technician; only an admin assigns one.
     if (data.technicianId !== undefined) assertCanManageTechnicians(user?.role);
 
@@ -82,7 +93,9 @@ export class OrdersService {
 
     // 2. Matching. Without a named provider the order is offered to a group of eligible providers at once
     // (see OrderDispatchService); the first to accept gets it. A provider with no matching skill is never asked.
-    let providerId = data.providerId;
+    // A provider's own order goes to them alone: it is never offered to other providers.
+    const ownProviderId = options.origin?.ownProviderId;
+    let providerId = ownProviderId ?? data.providerId;
     let isOfferedToGroup = false;
     if (!providerId) {
       const customerRow = await this.prisma.customerProfile.findUnique({ where: { id: customerId }, select: { userId: true } });
@@ -109,7 +122,10 @@ export class OrdersService {
 
     // The provider's own commission percent. For an order offered to a group this is the stand-in's; it is
     // worked out again for whoever accepts (OrderDispatchService.closeOffersAfterAcceptance).
-    const commissionPercent = await providerCommissionPercent(this.prisma, providerId);
+    // A provider's own order is charged by the admin's one rule for such orders (0 while it is off) instead.
+    const commissionPercent = ownProviderId
+      ? providerOrderChargePercent(await readProviderOrderCharge(this.prisma))
+      : await providerCommissionPercent(this.prisma, providerId);
     const prices = { ...calculateOrderPrices({ ...data, commissionPercent }), commissionRate: commissionPercent };
     // The main service decides which chat the order is a tab of.
     const serviceRow = await this.prisma.service.findUnique({ where: { id: data.serviceId }, select: { categoryId: true } });
@@ -124,6 +140,12 @@ export class OrdersService {
           serviceId: data.serviceId,
           categoryId: serviceRow?.categoryId ?? null,
           isPricePending: options.isPricePending ?? false,
+          createdByRole: options.origin?.createdByRole ?? (user && isOrderStaff(user.role) ? OrderCreator.ADMIN : OrderCreator.CUSTOMER),
+          createdById: options.origin?.createdById ?? user?.id ?? null,
+          // The provider made it, so it is theirs and taken from the start: nothing to accept. IN_PROGRESS, as a
+          // provider's Accept sets it: extra charges, quotes and Work Complete all need it, and nothing moves an
+          // order on from ACCEPTED.
+          ...(ownProviderId ? { orderStatus: OrderStatus.IN_PROGRESS, acceptedAt: new Date() } : {}),
           ...prices,
         },
         include: ORDER_RELATIONS_INCLUDE,

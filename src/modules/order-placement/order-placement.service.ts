@@ -1,10 +1,10 @@
 import { assertNoPhoneNumber } from '../../common/contact-privacy';
 import { phoneLookupVariants } from '../../common/phone';
 import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
-import { Prisma, PriceUnit, UserRole } from '@prisma/client';
+import { OrderCreator, Prisma, PriceUnit, UserRole } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { LocationsService } from '../locations/locations.service';
-import { OrdersService } from '../orders/orders.service';
+import { OrderOrigin, OrdersService } from '../orders/orders.service';
 import { AdminCustomOrderDto, AdminPlaceCartOrderDto, AdminPlaceOrderDto, CustomerCustomOrderDto, OrderPlaceFieldsDto, PlaceCartOrderDto, PlaceOrderDto, QuoteCartDto, QuoteOrderDto } from './dto/place-order.dto';
 import { ensureCustomService } from './custom-service';
 import { ensureCategoryCustomService } from '../catalog/catalog-custom';
@@ -90,10 +90,21 @@ export class OrderPlacementService {
    * reused, a new number becomes a customer account (no name needed; they can sign in later with OTP). The
    * order then goes through exactly the same pricing, area matching and dispatch as one placed in the app.
    */
-  async placeOrderForCustomer(dto: AdminPlaceOrderDto) {
+  async placeOrderForCustomer(dto: AdminPlaceOrderDto, origin: OrderOrigin) {
     const { customerPhone, customerName, ...order } = dto;
     const customerId = await this.resolveCustomerForAdmin(customerPhone, customerName);
-    return this.placeOrder(order, { id: customerId, role: UserRole.CUSTOMER });
+    return this.placeOrder(order, { id: customerId, role: UserRole.CUSTOMER }, origin);
+  }
+
+  /**
+   * Who is booking for a customer by phone number: a staff member (the order is dispatched as usual), or a
+   * provider for their own customer (the order is theirs at once, charged by the admin's provider-order rule).
+   */
+  async originFor(user: { id: string; role: UserRole }): Promise<OrderOrigin> {
+    if (user.role !== UserRole.PROVIDER) return { createdByRole: OrderCreator.ADMIN, createdById: user.id };
+    const provider = await this.prisma.providerProfile.findUnique({ where: { userId: user.id }, select: { id: true } });
+    if (!provider) throw new BadRequestException('Provider profile not found');
+    return { createdByRole: OrderCreator.PROVIDER, createdById: user.id, ownProviderId: provider.id };
   }
 
   /**
@@ -101,7 +112,7 @@ export class OrderPlacementService {
    * details and the price. The order hangs off the hidden custom service, keeps the typed names on its booking
    * detail (every order screen shows those), and is offered to every available provider in the area.
    */
-  async placeCustomOrderForCustomer(dto: AdminCustomOrderDto) {
+  async placeCustomOrderForCustomer(dto: AdminCustomOrderDto, origin: OrderOrigin) {
     const mainServiceName = dto.mainServiceName.trim();
     const subServiceName = dto.subServiceName.trim();
     if (!mainServiceName || !subServiceName) throw new BadRequestException('Write the main service and the sub-service');
@@ -115,7 +126,7 @@ export class OrderPlacementService {
     const customerId = await this.resolveCustomerForAdmin(dto.customerPhone, dto.customerName);
     const serviceId = await ensureCustomService(this.prisma);
     const location = { districtId: dto.districtId, upazilaId: dto.upazilaId };
-    const order = await this.orders.create({ serviceId, originalPrice: dto.price }, { id: customerId, role: UserRole.CUSTOMER }, location);
+    const order = await this.orders.create({ serviceId, originalPrice: dto.price }, { id: customerId, role: UserRole.CUSTOMER }, location, { origin });
 
     const priceLine = { label: subServiceName, unitPrice: dto.price, count: 1, amount: dto.price };
     try {
@@ -218,7 +229,7 @@ export class OrderPlacementService {
     });
   }
 
-  async placeOrder(dto: PlaceOrderDto, user: { id: string; role: UserRole }) {
+  async placeOrder(dto: PlaceOrderDto, user: { id: string; role: UserRole }, origin?: OrderOrigin) {
     // The provider reads this text, so it cannot carry the customer's phone number.
     assertNoPhoneNumber(dto.description);
     const { subService, quote } = await this.priceSelection(dto);
@@ -237,6 +248,7 @@ export class OrderPlacementService {
       { serviceId: subService.id, originalPrice: quote.total },
       user,
       { districtId: dto.districtId, upazilaId: dto.upazilaId },
+      { origin },
     );
 
     const quantity = quote.lines[0].count;
@@ -312,19 +324,19 @@ export class OrderPlacementService {
    * service for older screens; every option is an order item, and only providers offering all of them are asked.
    */
   /** An admin orders a cart for a customer by phone number; then it is exactly the customer's own cart order. */
-  async placeCartOrderForCustomer(dto: AdminPlaceCartOrderDto) {
+  async placeCartOrderForCustomer(dto: AdminPlaceCartOrderDto, origin: OrderOrigin) {
     const { customerPhone, customerName, ...cart } = dto;
     const customerId = await this.resolveCustomerForAdmin(customerPhone, customerName);
-    return this.placeCartOrder(cart, { id: customerId, role: UserRole.CUSTOMER });
+    return this.placeCartOrder(cart, { id: customerId, role: UserRole.CUSTOMER }, origin);
   }
 
-  async placeCartOrder(dto: PlaceCartOrderDto, user: { id: string; role: UserRole }) {
+  async placeCartOrder(dto: PlaceCartOrderDto, user: { id: string; role: UserRole }, origin?: OrderOrigin) {
     assertNoPhoneNumber(dto.description);
     const { picked, quote } = await this.priceCart(dto);
     this.assertPlace(dto);
 
     const serviceIds = [...new Set(picked.map((item) => item.variant.serviceId))];
-    const order = await this.orders.create({ serviceId: serviceIds[0], originalPrice: quote.total }, user, { districtId: dto.districtId, upazilaId: dto.upazilaId }, { serviceIds });
+    const order = await this.orders.create({ serviceId: serviceIds[0], originalPrice: quote.total }, user, { districtId: dto.districtId, upazilaId: dto.upazilaId }, { serviceIds, origin });
 
     const firstName = picked[0].variant.service.name;
     const title = picked.length === 1 ? firstName : `${firstName} +${picked.length - 1}`;

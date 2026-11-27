@@ -24,6 +24,7 @@ import { ActiveChatSlotModule } from './modules/active-chat-slot/active-chat-slo
 import { CustomerRetentionModule } from './modules/customer-retention/customer-retention.module';
 import { OrdersModule } from './modules/orders/orders.module';
 import { OrderPlacementModule } from './modules/order-placement/order-placement.module';
+import { PlatformSettingsModule } from './modules/platform-settings/platform-settings.module';
 import { UploadsModule } from './modules/uploads/uploads.module';
 import { OrderPaymentTipModule } from './modules/order-payment-tip/order-payment-tip.module';
 import { OrderExtraChargeModule } from './modules/order-extra-charge/order-extra-charge.module';
@@ -68,6 +69,7 @@ import { OrderQuoteModule } from './modules/order-quote/order-quote.module';
     CustomerRetentionModule,
     OrdersModule,
     OrderPlacementModule,
+    PlatformSettingsModule,
     UploadsModule,
     OrderPaymentTipModule,
     OrderExtraChargeModule,

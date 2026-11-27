@@ -78,6 +78,13 @@ enum ConfirmationStatus {
   EXPIRED
 }
 
+/// Who created an order. Every screen shows it as a tag.
+enum OrderCreator {
+  CUSTOMER
+  PROVIDER
+  ADMIN
+}
+
 enum OrderStatus {
   PENDING
   ACCEPTED
@@ -178,6 +185,7 @@ model User {
   moderationLog          UserModerationLog[]  @relation("ModeratedUser")
   moderationsDone        UserModerationLog[]  @relation("ModerationActor")
   orderAssignmentsDone   OrderAssignmentLog[] @relation("OrderAssignmentActor")
+  ordersCreated          Order[]              @relation("OrderCreatedBy")
 
   @@index([mobileNumber, name])
 }
@@ -657,6 +665,11 @@ model Order {
   additionalPrice Decimal       @default(0.0) @db.Decimal(10, 2)
   totalPrice      Decimal       @db.Decimal(10, 2)
   priceEditCount  Int           @default(0)
+  /// Who created the order: the customer in the app, a provider for their own customer, or staff for a
+  /// customer. Orders made before this was recorded are all CUSTOMER.
+  createdByRole   OrderCreator  @default(CUSTOMER)
+  /// The account that created it (the customer, the provider or the staff member). Null on old orders.
+  createdById     String?
   advancePaid     Decimal       @default(0.0) @db.Decimal(10, 2)
   dueAmount       Decimal       @default(0.0) @db.Decimal(10, 2)
   paymentStatus   PaymentStatus @default(UNPAID)
@@ -667,6 +680,8 @@ model Order {
   provider        ProviderProfile       @relation(fields: [providerId], references: [id], onDelete: Restrict)
   customer        CustomerProfile       @relation(fields: [customerId], references: [id], onDelete: Restrict)
   technician      TechnicianProfile?    @relation(fields: [technicianId], references: [id], onDelete: SetNull)
+  /// The account that created the order, for its "created by" tag.
+  createdBy       User?                 @relation("OrderCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
   service         Service               @relation(fields: [serviceId], references: [id], onDelete: Restrict)
   category        ServiceCategory?      @relation(fields: [categoryId], references: [id], onDelete: SetNull)
   quotes          OrderQuote[]
@@ -689,6 +704,7 @@ model Order {
   @@index([technicianId])
   @@index([serviceId])
   @@index([categoryId])
+  @@index([createdById])
 }
 
 enum QuoteStatus {
@@ -1191,4 +1207,15 @@ model LevelSetting {
   earnings      Int
   updatedAt     DateTime      @updatedAt
   updatedById   String?
+}
+
+/// Platform-wide settings an admin controls. One row only, id "default"; missing means the defaults below.
+model PlatformSetting {
+  id                         String   @id @default("default")
+  /// Whether the platform takes a charge on orders a provider creates for their own customer.
+  providerOrderChargeEnabled Boolean  @default(true)
+  /// That charge, in percent (10 = 10%). Ignored while the charge is off.
+  providerOrderChargeRate    Decimal  @default(10.0) @db.Decimal(5, 2)
+  updatedAt                  DateTime @updatedAt
+  updatedById                String?
 }

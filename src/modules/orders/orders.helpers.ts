@@ -2,6 +2,8 @@ import { Prisma } from '@prisma/client';
 import { BadRequestException } from '@nestjs/common';
 
 export const ORDER_RELATIONS_INCLUDE = {
+  // The "created by" tag every role sees: the name only, never the creator's number.
+  createdBy: { select: { name: true } },
   // Explicit fields: the customer must never receive the provider's wallet, earnings or blocked flag.
   provider: {
     select: {

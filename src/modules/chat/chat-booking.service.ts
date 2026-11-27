@@ -105,6 +105,9 @@ export class ChatBookingService {
           originalPrice,
           adminCommission,
           commissionRate,
+          // The customer books from their own chat.
+          createdByRole: 'CUSTOMER',
+          createdById: userId,
           totalPrice,
           advancePaid: 0,
           dueAmount: totalPrice,
