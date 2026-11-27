@@ -11,6 +11,7 @@ import { join } from 'path';
 import { PrismaService } from '../../prisma/prisma.service';
 import { phoneLookupVariants } from '../../common/phone';
 import { LocationsService } from '../locations/locations.service';
+import { ProviderTermsService } from '../provider-terms/provider-terms.service';
 import {
   ReviewProviderKycDto,
   SubmitProviderKycDto,
@@ -62,6 +63,7 @@ export class ProviderKycService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly locations: LocationsService,
+    private readonly terms: ProviderTermsService,
   ) {}
 
   private async providerOf(userId: string) {
@@ -147,6 +149,14 @@ export class ProviderKycService {
 
     // Family numbers must be other people, never the provider's own (login) number.
     const emergencyContacts = this.checkedContacts(dto, [contactPhone]);
+    // The terms they accepted must be the ones in force: if the admin published new ones while the form was open,
+    // they read and accept those first.
+    const terms = await this.terms.current();
+    if (dto.termsVersion.trim() !== String(terms.version)) {
+      throw new ConflictException(
+        'The provider terms have changed. Read the new version and accept it to send.',
+      );
+    }
     const fullName = dto.fullName.trim();
     const data = {
       fullName,
@@ -168,7 +178,7 @@ export class ProviderKycService {
       submittedAt: new Date(),
       // Every send is a fresh acceptance of the terms shown just before it.
       termsAcceptedAt: new Date(),
-      termsVersion: dto.termsVersion.trim(),
+      termsVersion: String(terms.version),
       reviewedAt: null,
       reviewedById: null,
       rejectReason: null,
@@ -179,6 +189,10 @@ export class ProviderKycService {
         where: { providerId: provider.id },
         create: { providerId: provider.id, ...data },
         update: data,
+      }),
+      // The acceptance of the terms they just read, kept as proof.
+      this.prisma.providerTermsAcceptance.create({
+        data: { providerId: provider.id, version: terms.version },
       }),
       // The account had no name yet (phone-only login): the name on the NID becomes it.
       ...(provider.user.name?.trim()

@@ -265,6 +265,7 @@ model ProviderProfile {
   withdrawalRequests  WithdrawalRequest[]
   dueReminders        DueReminder[]
   dispatchStats       ProviderDispatchStats?
+  termsAcceptances    ProviderTermsAcceptance[]
 }
 
 model CounselorProfile {
@@ -1301,4 +1302,28 @@ model ProviderDispatchStats {
   refreshedAt        DateTime      @default(now())
 
   provider ProviderProfile @relation(fields: [providerId], references: [id], onDelete: Cascade)
+}
+
+/// One published version of the provider terms (conduct and liability) providers accept. Never edited or deleted:
+/// a change is a new version, so the exact text each provider accepted can always be shown. With no row yet, the
+/// built-in text (provider-terms/default-terms.ts) is version 1.
+model ProviderTermsVersion {
+  version     Int      @id
+  title       String   @db.VarChar(200)
+  /// [{ heading, points: string[] }]
+  sections    Json
+  createdAt   DateTime @default(now())
+  createdById String?
+}
+
+/// Each time a provider accepted the terms: with their KYC, or again after the admin published a new version.
+model ProviderTermsAcceptance {
+  id         String   @id @default(uuid())
+  providerId String
+  version    Int
+  acceptedAt DateTime @default(now())
+
+  provider ProviderProfile @relation(fields: [providerId], references: [id], onDelete: Cascade)
+
+  @@index([providerId, version])
 }

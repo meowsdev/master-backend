@@ -25,6 +25,7 @@ import { CustomerRetentionModule } from './modules/customer-retention/customer-r
 import { OrdersModule } from './modules/orders/orders.module';
 import { OrderPlacementModule } from './modules/order-placement/order-placement.module';
 import { PlatformSettingsModule } from './modules/platform-settings/platform-settings.module';
+import { ProviderTermsModule } from './modules/provider-terms/provider-terms.module';
 import { UploadsModule } from './modules/uploads/uploads.module';
 import { OrderPaymentTipModule } from './modules/order-payment-tip/order-payment-tip.module';
 import { OrderExtraChargeModule } from './modules/order-extra-charge/order-extra-charge.module';
@@ -70,6 +71,7 @@ import { OrderQuoteModule } from './modules/order-quote/order-quote.module';
     OrdersModule,
     OrderPlacementModule,
     PlatformSettingsModule,
+    ProviderTermsModule,
     UploadsModule,
     OrderPaymentTipModule,
     OrderExtraChargeModule,

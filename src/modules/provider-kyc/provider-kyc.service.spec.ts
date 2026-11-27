@@ -98,12 +98,22 @@ function build(kyc: Record<string, unknown> | null = null, serviceAreas = 1) {
       findUniqueOrThrow: jest.fn().mockResolvedValue({}),
     },
     user: { update: jest.fn().mockReturnValue('user') },
+    providerTermsAcceptance: {
+      create: jest.fn().mockReturnValue('acceptance'),
+    },
     $transaction: jest.fn().mockResolvedValue([]),
   };
   const locations = { isValidLocation: jest.fn().mockReturnValue(true) };
+  // The terms in force are version 1 unless a test says otherwise.
+  const terms = { current: jest.fn().mockResolvedValue({ version: 1 }) };
   return {
-    service: new ProviderKycService(prisma as never, locations as never),
+    service: new ProviderKycService(
+      prisma as never,
+      locations as never,
+      terms as never,
+    ),
     prisma,
+    terms,
   };
 }
 
@@ -122,7 +132,7 @@ const form = {
   nidBackKey: key(USER, 2),
   selfieKey: key(USER, 3),
   acceptTerms: true as const,
-  termsVersion: '2026-11-27',
+  termsVersion: '1',
   emergencyContacts: [
     { name: 'Karim', relation: 'বাবা', phone: '01811111111' },
     { name: 'Salma', relation: 'মা', phone: '01922222222' },
@@ -275,7 +285,21 @@ describe('the provider terms', () => {
     const [[upsert]] = prisma.providerKyc.upsert.mock.calls as [
       [{ create: Record<string, unknown> }],
     ];
-    expect(upsert.create.termsVersion).toBe('2026-11-27');
+    expect(upsert.create.termsVersion).toBe('1');
+    expect(prisma.providerTermsAcceptance.create).toHaveBeenCalledWith({
+      data: { providerId: 'pp1', version: 1 },
+    });
     expect(upsert.create.termsAcceptedAt).toBeInstanceOf(Date);
+  });
+});
+
+describe('terms changed while the form was open', () => {
+  it('refuses the send, so the provider reads and accepts the new version first', async () => {
+    const { service, terms, prisma } = build();
+    terms.current.mockResolvedValue({ version: 2 });
+    await expect(service.submitMine(USER, form)).rejects.toThrow(
+      'terms have changed',
+    );
+    expect(prisma.providerKyc.upsert).not.toHaveBeenCalled();
   });
 });
