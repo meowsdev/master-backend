@@ -13,9 +13,16 @@ import { phoneLookupVariants } from '../../common/phone';
 import { LocationsService } from '../locations/locations.service';
 import { ProviderTermsService } from '../provider-terms/provider-terms.service';
 import {
+  AdminVerifyProviderKycDto,
   ReviewProviderKycDto,
   SubmitProviderKycDto,
 } from './dto/provider-kyc.dto';
+
+/** The form fields both the provider's own send and an admin's entry carry. */
+type KycFormFields = Omit<
+  SubmitProviderKycDto,
+  'acceptTerms' | 'termsVersion' | 'contactPhone'
+>;
 import {
   KYC_FILE_DIR,
   isValidNid,
@@ -124,31 +131,8 @@ export class ProviderKycService {
       );
     if (provider._count.serviceAreas === 0)
       throw new BadRequestException('Choose at least one area where you work');
-    if (!this.locations.isValidLocation(dto.districtId, dto.upazilaId))
-      throw new BadRequestException(
-        'Please choose a valid district and upazila',
-      );
 
-    // The phone is always the login number: it cannot be changed here, whatever the form sends.
-    const contactPhone = provider.user.mobileNumber;
-    if (!/^\d{4}$/.test(dto.postCode.trim()))
-      throw new BadRequestException('The post code must be 4 digits');
-
-    const nidNumber = dto.nidNumber.replace(/\s/g, '');
-    if (!isValidNid(nidNumber))
-      throw new BadRequestException(
-        'The NID number must be 10, 13 or 17 digits',
-      );
-
-    for (const key of [dto.nidFrontKey, dto.nidBackKey, dto.selfieKey])
-      this.assertOwnFile(key, userId);
-    if (new Set([dto.nidFrontKey, dto.nidBackKey, dto.selfieKey]).size < 3)
-      throw new BadRequestException(
-        'The NID front, back and your photo must be three different pictures',
-      );
-
-    // Family numbers must be other people, never the provider's own (login) number.
-    const emergencyContacts = this.checkedContacts(dto, [contactPhone]);
+    const fields = this.checkedForm(dto, userId, provider.user.mobileNumber);
     // The terms they accepted must be the ones in force: if the admin published new ones while the form was open,
     // they read and accept those first.
     const terms = await this.terms.current();
@@ -157,23 +141,9 @@ export class ProviderKycService {
         'The provider terms have changed. Read the new version and accept it to send.',
       );
     }
-    const fullName = dto.fullName.trim();
+    const fullName = fields.fullName;
     const data = {
-      fullName,
-      fatherName: dto.fatherName.trim(),
-      motherName: dto.motherName.trim(),
-      gender: dto.gender,
-      contactPhone,
-      districtId: dto.districtId,
-      upazilaId: dto.upazilaId,
-      postCode: dto.postCode.trim(),
-      addressDetail: dto.addressDetail.trim(),
-      nidNumber,
-      tradeLicenseNo: dto.tradeLicenseNo?.trim() || null,
-      nidFrontUrl: dto.nidFrontKey,
-      nidBackUrl: dto.nidBackKey,
-      selfieUrl: dto.selfieKey,
-      emergencyContacts: emergencyContacts as unknown as Prisma.InputJsonValue,
+      ...fields,
       status: KycStatus.PENDING,
       submittedAt: new Date(),
       // Every send is a fresh acceptance of the terms shown just before it.
@@ -207,9 +177,136 @@ export class ProviderKycService {
     return this.findMine(userId);
   }
 
+  /**
+   * The form checked and cleaned, the same for the provider's own send and an admin's entry: home address, NID,
+   * the three pictures (uploaded for `fileOwnerId`), and the family numbers. The phone is always the login number.
+   */
+  private checkedForm(
+    dto: KycFormFields,
+    fileOwnerId: string,
+    loginNumber: string,
+  ) {
+    if (!this.locations.isValidLocation(dto.districtId, dto.upazilaId))
+      throw new BadRequestException(
+        'Please choose a valid district and upazila',
+      );
+    if (!/^\d{4}$/.test(dto.postCode.trim()))
+      throw new BadRequestException('The post code must be 4 digits');
+
+    const nidNumber = dto.nidNumber.replace(/\s/g, '');
+    if (!isValidNid(nidNumber))
+      throw new BadRequestException(
+        'The NID number must be 10, 13 or 17 digits',
+      );
+
+    for (const key of [dto.nidFrontKey, dto.nidBackKey, dto.selfieKey])
+      this.assertOwnFile(key, fileOwnerId);
+    if (new Set([dto.nidFrontKey, dto.nidBackKey, dto.selfieKey]).size < 3)
+      throw new BadRequestException(
+        'The NID front, back and the photo must be three different pictures',
+      );
+
+    // Family numbers must be other people, never the provider's own (login) number.
+    const emergencyContacts = this.checkedContacts(dto, [loginNumber]);
+    return {
+      fullName: dto.fullName.trim(),
+      fatherName: dto.fatherName.trim(),
+      motherName: dto.motherName.trim(),
+      gender: dto.gender,
+      contactPhone: loginNumber,
+      districtId: dto.districtId,
+      upazilaId: dto.upazilaId,
+      postCode: dto.postCode.trim(),
+      addressDetail: dto.addressDetail.trim(),
+      nidNumber,
+      tradeLicenseNo: dto.tradeLicenseNo?.trim() || null,
+      nidFrontUrl: dto.nidFrontKey,
+      nidBackUrl: dto.nidBackKey,
+      selfieUrl: dto.selfieKey,
+      emergencyContacts: emergencyContacts as unknown as Prisma.InputJsonValue,
+    };
+  }
+
+  /**
+   * Admin: fill in a provider's whole KYC (NID, pictures, address, family numbers, work areas) and verify it at once,
+   * e.g. to get a provider working right away before they have opened the app. Approved on save; the provider is
+   * asked to read and accept the provider terms themselves on their first visit (their acceptance is not invented).
+   */
+  async verifyForMember(
+    memberUserId: string,
+    dto: AdminVerifyProviderKycDto,
+    adminId: string,
+  ) {
+    const provider = await this.providerOf(memberUserId);
+    const areas = [
+      ...new Map(
+        (dto.serviceAreas ?? []).map((area) => [area.upazilaId, area]),
+      ).values(),
+    ];
+    if (
+      areas.some(
+        (area) =>
+          !this.locations.isValidLocation(area.districtId, area.upazilaId),
+      )
+    )
+      throw new BadRequestException(
+        'One of the work areas does not belong to its district',
+      );
+    if (areas.length === 0 && provider._count.serviceAreas === 0)
+      throw new BadRequestException(
+        'Choose at least one area where this provider works',
+      );
+
+    const fields = this.checkedForm(
+      dto,
+      memberUserId,
+      provider.user.mobileNumber,
+    );
+    const now = new Date();
+    const data = {
+      ...fields,
+      status: KycStatus.APPROVED,
+      submittedAt: now,
+      reviewedAt: now,
+      reviewedById: adminId,
+      rejectReason: null,
+    };
+
+    await this.prisma.$transaction([
+      ...(areas.length > 0
+        ? [
+            this.prisma.providerServiceArea.deleteMany({
+              where: { providerId: provider.id },
+            }),
+            this.prisma.providerServiceArea.createMany({
+              data: areas.map(({ districtId, upazilaId }) => ({
+                providerId: provider.id,
+                districtId,
+                upazilaId,
+              })),
+            }),
+          ]
+        : []),
+      this.prisma.providerKyc.upsert({
+        where: { providerId: provider.id },
+        create: { providerId: provider.id, ...data },
+        update: data,
+      }),
+      ...(provider.user.name?.trim()
+        ? []
+        : [
+            this.prisma.user.update({
+              where: { id: memberUserId },
+              data: { name: fields.fullName },
+            }),
+          ]),
+    ]);
+    return this.findForMember(memberUserId);
+  }
+
   /** Two or three different family numbers, none of them the provider's own. Stored as +8801XXXXXXXXX. */
   private checkedContacts(
-    dto: SubmitProviderKycDto,
+    dto: Pick<KycFormFields, 'emergencyContacts'>,
     ownNumbers: Array<string | null>,
   ) {
     const own = new Set(

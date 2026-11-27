@@ -101,6 +101,10 @@ function build(kyc: Record<string, unknown> | null = null, serviceAreas = 1) {
     providerTermsAcceptance: {
       create: jest.fn().mockReturnValue('acceptance'),
     },
+    providerServiceArea: {
+      deleteMany: jest.fn().mockReturnValue('clear-areas'),
+      createMany: jest.fn().mockReturnValue('set-areas'),
+    },
     $transaction: jest.fn().mockResolvedValue([]),
   };
   const locations = { isValidLocation: jest.fn().mockReturnValue(true) };
@@ -301,5 +305,56 @@ describe('terms changed while the form was open', () => {
       'terms have changed',
     );
     expect(prisma.providerKyc.upsert).not.toHaveBeenCalled();
+  });
+});
+
+describe('an admin filling in and verifying a KYC for a provider', () => {
+  // The admin's form: the provider's own fields without the terms (the provider accepts those themselves).
+  const adminForm = Object.fromEntries(
+    Object.entries(form).filter(
+      ([field]) => field !== 'acceptTerms' && field !== 'termsVersion',
+    ),
+  ) as Omit<typeof form, 'acceptTerms' | 'termsVersion'>;
+  const areas = [{ districtId: 1, upazilaId: 9 }];
+
+  it('approves it at once, records the admin, sets the work areas, and does not invent a terms acceptance', async () => {
+    const { service, prisma } = build();
+    jest.spyOn(service, 'findForMember').mockResolvedValue({} as never);
+    await service.verifyForMember(
+      USER,
+      { ...adminForm, serviceAreas: areas },
+      'admin-1',
+    );
+    const [[upsert]] = prisma.providerKyc.upsert.mock.calls as [
+      [{ create: Record<string, unknown> }],
+    ];
+    expect(upsert.create).toEqual(
+      expect.objectContaining({
+        status: 'APPROVED',
+        reviewedById: 'admin-1',
+        nidNumber: '1234567890',
+      }),
+    );
+    expect(upsert.create).not.toHaveProperty('termsAcceptedAt');
+    expect(prisma.providerServiceArea.createMany).toHaveBeenCalledWith({
+      data: [{ providerId: 'pp1', districtId: 1, upazilaId: 9 }],
+    });
+    expect(prisma.providerTermsAcceptance.create).not.toHaveBeenCalled();
+  });
+
+  it('needs a work area when the provider has none', async () => {
+    await expect(
+      build(null, 0).service.verifyForMember(USER, adminForm, 'admin-1'),
+    ).rejects.toThrow('area');
+  });
+
+  it('only takes pictures uploaded for this provider', async () => {
+    await expect(
+      build().service.verifyForMember(
+        USER,
+        { ...adminForm, nidFrontKey: key(OTHER, 4) },
+        'admin-1',
+      ),
+    ).rejects.toBeInstanceOf(BadRequestException);
   });
 });

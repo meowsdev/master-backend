@@ -1,4 +1,4 @@
-import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional, OmitType } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
   ArrayMaxSize,
@@ -106,4 +106,31 @@ export class ReviewProviderKycDto {
   @IsString()
   @MaxLength(300)
   reason?: string;
+}
+
+/** One upazila an admin sets as a work area for the provider (with its district). */
+export class AdminServiceAreaDto {
+  @Type(() => Number) @IsInt() districtId!: number;
+  @Type(() => Number) @IsInt() upazilaId!: number;
+}
+
+/**
+ * Admin: a provider's whole KYC, entered on their behalf and verified at once. The same fields as the provider's own
+ * form, without the terms (the provider accepts those themselves on their first visit), plus their work areas.
+ */
+export class AdminVerifyProviderKycDto extends OmitType(SubmitProviderKycDto, [
+  'acceptTerms',
+  'termsVersion',
+  'contactPhone',
+] as const) {
+  @ApiPropertyOptional({
+    type: [AdminServiceAreaDto],
+    description: 'Replaces the work areas; leave out to keep them',
+  })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(200)
+  @ValidateNested({ each: true })
+  @Type(() => AdminServiceAreaDto)
+  serviceAreas?: AdminServiceAreaDto[];
 }

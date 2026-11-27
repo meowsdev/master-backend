@@ -31,9 +31,13 @@ import { Roles } from '../auth/decorators/roles.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import {
+  AdminVerifyProviderKycDto,
   ReviewProviderKycDto,
   SubmitProviderKycDto,
 } from './dto/provider-kyc.dto';
+
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 import { KYC_FILE_DIR, KYC_FILE_EXTENSIONS } from './kyc-rules';
 import { ProviderKycService } from './provider-kyc.service';
 
@@ -147,6 +151,71 @@ export class ProviderKycController {
   })
   findForMember(@Param('userId', new ParseUUIDPipe()) userId: string) {
     return this.kyc.findForMember(userId);
+  }
+
+  @Post('member/:userId/documents')
+  @Roles(UserRole.ADMIN)
+  @ApiConsumes('multipart/form-data')
+  @ApiOperation({
+    summary:
+      "ADMIN: upload one KYC picture for a provider; it is the provider's file (they can see it too)",
+  })
+  @UseInterceptors(
+    FileInterceptor('file', {
+      limits: { fileSize: 5 * 1024 * 1024 },
+      storage: diskStorage({
+        destination: (_req, _file, done) => {
+          mkdirSync(KYC_FILE_DIR, { recursive: true });
+          done(null, KYC_FILE_DIR);
+        },
+        // Named for the provider (from the path, checked to be a user id), so the file is theirs like their own upload.
+        filename: (req, file, done) => {
+          const userId = String(
+            (req.params as { userId?: string }).userId ?? '',
+          );
+          if (!UUID_PATTERN.test(userId))
+            return done(new BadRequestException('Invalid provider'), '');
+          done(
+            null,
+            `${userId.toLowerCase()}_${randomUUID()}${extname(file.originalname).toLowerCase()}`,
+          );
+        },
+      }),
+      fileFilter: (_req, file, done) => {
+        const isAllowed = KYC_FILE_EXTENSIONS.includes(
+          extname(file.originalname).toLowerCase(),
+        );
+        done(
+          isAllowed
+            ? null
+            : new BadRequestException(
+                'Only JPG, PNG or WEBP pictures are allowed',
+              ),
+          isAllowed,
+        );
+      },
+    }),
+  )
+  uploadMemberDocument(
+    @Param('userId', new ParseUUIDPipe()) _userId: string,
+    @UploadedFile() file?: { filename: string },
+  ) {
+    if (!file) throw new BadRequestException('Choose a picture');
+    return { key: file.filename };
+  }
+
+  @Put('member/:userId')
+  @Roles(UserRole.ADMIN)
+  @ApiOperation({
+    summary:
+      "ADMIN: fill in a provider's whole KYC and verify it at once (they accept the terms on first visit)",
+  })
+  verifyForMember(
+    @Param('userId', new ParseUUIDPipe()) userId: string,
+    @Body() dto: AdminVerifyProviderKycDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.kyc.verifyForMember(userId, dto, req.user.id);
   }
 
   @Patch(':id/status')
