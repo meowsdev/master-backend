@@ -239,14 +239,19 @@ model ProviderProfile {
   /// Why the admin set the level by hand (shown to the provider).
   levelLockReason      String?       @db.VarChar(300)
   experienceYears      Int           @default(0)
+  /// This provider's charge on orders they create for their own customers (Provider created), in percent. Null:
+  /// the admin's one rule for every provider (PlatformSetting.providerOrderCharge*) applies.
+  ownOrderChargeRate   Decimal?      @db.Decimal(5, 2)
   /// Providers who were working before KYC was required may still get orders until this moment without an
   /// approved KYC. Null (every new provider): no orders until the KYC is approved.
   kycGraceUntil        DateTime?
   isAvailable          Boolean       @default(true)
   monthlyEarnings      Decimal       @default(0.0) @db.Decimal(10, 2)
   walletBalance        Decimal       @default(0.0) @db.Decimal(10, 2)
-  /// The platform's share of this provider's jobs, in percent (10 = 10%). An admin sets it per provider.
-  commissionRate       Decimal       @default(10.0) @db.Decimal(5, 2)
+  /// The platform's share of the orders this provider gets from the platform, in percent (10 = 10%), set by an admin
+  /// for this provider. Null: the global rate (PlatformSetting.platformOrderCommissionRate) applies. Providers from
+  /// before the global rate kept the percent they had.
+  commissionRate       Decimal?      @db.Decimal(5, 2)
   isBlockedForNegative Boolean       @default(false)
   createdAt            DateTime      @default(now())
   updatedAt            DateTime      @updatedAt
@@ -1261,6 +1266,8 @@ model PlatformSetting {
   providerOrderChargeEnabled Boolean  @default(true)
   /// That charge, in percent (10 = 10%). Ignored while the charge is off.
   providerOrderChargeRate    Decimal  @default(10.0) @db.Decimal(5, 2)
+  /// The platform's share of orders from the platform for every provider without their own rate, in percent.
+  platformOrderCommissionRate Decimal @default(50.0) @db.Decimal(5, 2)
   updatedAt                  DateTime @updatedAt
   updatedById                String?
 }

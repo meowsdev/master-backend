@@ -13,6 +13,8 @@ const order = (providerId: string, completedAt: Date, totalPrice: number, adminC
 
 function build() {
   const prisma = {
+    // The global commission on platform orders, shown for partners without their own rate.
+    platformSetting: { findUnique: jest.fn().mockResolvedValue({ platformOrderCommissionRate: 50 }) },
     order: {
       findMany: jest.fn().mockResolvedValue([
         // A 30% partner: ৳5000 job with ৳2000 parts approved → ৳900.

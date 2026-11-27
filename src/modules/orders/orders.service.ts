@@ -13,7 +13,7 @@ import { createWithUniqueReference } from './order-reference';
 import { acceptanceStamp, completionStamp } from './order-view';
 import { CreateCustomOrderDto } from './dto/create-custom-order.dto';
 import { isCustomServiceId } from '../order-placement/custom-service';
-import { providerOrderChargePercent, readProviderOrderCharge } from '../platform-settings/platform-settings.service';
+import { ownOrderChargePercentFor } from '../platform-settings/platform-settings.service';
 import {
   UpdateOrderDto,
   UpdateOrderStatusDto,
@@ -122,9 +122,10 @@ export class OrdersService {
 
     // The provider's own commission percent. For an order offered to a group this is the stand-in's; it is
     // worked out again for whoever accepts (OrderDispatchService.closeOffersAfterAcceptance).
-    // A provider's own order is charged by the admin's one rule for such orders (0 while it is off) instead.
+    // A provider's own order (Provider created) has its own charge: the percent an admin set for this provider, or
+    // the admin's one rule for every provider (0 while it is off).
     const commissionPercent = ownProviderId
-      ? providerOrderChargePercent(await readProviderOrderCharge(this.prisma))
+      ? await ownOrderChargePercentFor(this.prisma, ownProviderId)
       : await providerCommissionPercent(this.prisma, providerId);
     const prices = { ...calculateOrderPrices({ ...data, commissionPercent }), commissionRate: commissionPercent };
     // The main service decides which chat the order is a tab of.

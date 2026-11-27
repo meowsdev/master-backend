@@ -12,3 +12,12 @@ export class ProviderOrderChargeDto {
   @Max(100)
   rate!: number;
 }
+
+/** The global commission on orders from the platform, in percent (50 = 50%). */
+export class PlatformOrderCommissionDto {
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  @Max(100)
+  rate!: number;
+}

@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { ExpenseClaimStatus, OrderStatus, PaymentMode, WithdrawalStatus } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { effectiveCommissionRate, readPlatformOrderCommission } from '../orders/orders.helpers';
 
 /** Months shown in the monthly breakdown, this month included. */
 const MONTHS_SHOWN = 6;
@@ -113,6 +114,7 @@ export class AdminEarningsService {
       select: { id: true, companyName: true, commissionRate: true, walletBalance: true, user: { select: { id: true, name: true, username: true, mobileNumber: true } } },
     });
     const profileOf = new Map(profiles.map((profile) => [profile.id, profile]));
+    const globalRate = await readPlatformOrderCommission(this.prisma);
 
     return top.flatMap(([providerId, totals]) => {
       const profile = profileOf.get(providerId);
@@ -122,7 +124,7 @@ export class AdminEarningsService {
         userId: profile.user.id,
         name: profile.companyName || profile.user.name || profile.user.username || profile.user.mobileNumber,
         mobileNumber: profile.user.mobileNumber,
-        commissionRate: Number(profile.commissionRate),
+        commissionRate: effectiveCommissionRate(profile.commissionRate, globalRate),
         walletBalance: Number(profile.walletBalance),
         ...totals,
       }];

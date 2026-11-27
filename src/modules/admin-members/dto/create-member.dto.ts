@@ -1,4 +1,11 @@
-import { IsIn, IsInt, IsOptional, IsPhoneNumber, IsString, MaxLength } from 'class-validator';
+import {
+  IsIn,
+  IsInt,
+  IsOptional,
+  IsPhoneNumber,
+  IsString,
+  MaxLength,
+} from 'class-validator';
 
 /** An admin adds a provider or a customer by phone number. (Technicians have their own endpoint.) */
 export class CreateMemberDto {

@@ -4,7 +4,10 @@ import { UserRole } from '@prisma/client';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
-import { ProviderOrderChargeDto } from './dto/provider-order-charge.dto';
+import {
+  PlatformOrderCommissionDto,
+  ProviderOrderChargeDto,
+} from './dto/provider-order-charge.dto';
 import { PlatformSettingsService } from './platform-settings.service';
 
 @ApiTags('Platform settings')
@@ -34,5 +37,26 @@ export class PlatformSettingsController {
     @Req() req: { user: { id: string } },
   ) {
     return this.settings.setProviderOrderCharge(dto, req.user.id);
+  }
+
+  @Get('platform-order-commission')
+  @ApiOperation({
+    summary:
+      'ADMIN: the global commission on orders from the platform (providers without their own rate)',
+  })
+  getPlatformOrderCommission() {
+    return this.settings.getPlatformOrderCommission();
+  }
+
+  @Patch('platform-order-commission')
+  @ApiOperation({
+    summary:
+      'ADMIN: set the global commission on platform orders (new orders; own rates are kept)',
+  })
+  setPlatformOrderCommission(
+    @Body() dto: PlatformOrderCommissionDto,
+    @Req() req: { user: { id: string } },
+  ) {
+    return this.settings.setPlatformOrderCommission(dto.rate, req.user.id);
   }
 }

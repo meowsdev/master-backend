@@ -1,6 +1,7 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { UserRole } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { effectiveCommissionRate, readPlatformOrderCommission } from '../orders/orders.helpers';
 import { USER_EVENT_PUBLISHER } from '../order-dispatch/user-events';
 import type { UserEventPublisher } from '../order-dispatch/user-events';
 
@@ -56,6 +57,7 @@ export class DueReminderService {
       },
     });
 
+    const globalRate = await readPlatformOrderCommission(this.prisma);
     const rows = providers.map((provider) => ({
       providerId: provider.id,
       userId: provider.user.id,
@@ -65,7 +67,7 @@ export class DueReminderService {
       accountStatus: provider.user.status,
       dueAmount: -Number(provider.walletBalance),
       isBlocked: provider.isBlockedForNegative,
-      commissionRate: Number(provider.commissionRate),
+      commissionRate: effectiveCommissionRate(provider.commissionRate, globalRate),
       lastReminderAt: provider.dueReminders[0]?.createdAt ?? null,
       lastReminderWasAutomatic: provider.dueReminders[0]?.isAutomatic ?? null,
       reminderCount: provider._count.dueReminders,

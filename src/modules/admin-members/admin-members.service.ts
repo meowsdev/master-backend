@@ -1,14 +1,38 @@
-import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
-import { OfferStatus, OrderStatus, Prisma, UserRole, UserStatus } from '@prisma/client';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
+import {
+  OfferStatus,
+  OrderStatus,
+  Prisma,
+  UserRole,
+  UserStatus,
+} from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { effectiveCommissionRate, readPlatformOrderCommission } from '../orders/orders.helpers';
 import { providerAccountWhere } from '../provider-kyc/kyc-rules';
+import {
+  providerOrderChargePercent,
+  readProviderOrderCharge,
+} from '../platform-settings/platform-settings.service';
 import { LocationsService } from '../locations/locations.service';
-import { ratingsFromProviders, reviewsFromCustomers } from '../provider-review/received-reviews';
+import {
+  ratingsFromProviders,
+  reviewsFromCustomers,
+} from '../provider-review/received-reviews';
 import { CreateMemberDto } from './dto/create-member.dto';
 import { ModerationAction } from './dto/moderate-member.dto';
 
 /** The people staff manage here. Staff accounts are never moderated through this screen. */
-const MANAGEABLE_ROLES: UserRole[] = [UserRole.PROVIDER, UserRole.TECHNICIAN, UserRole.CUSTOMER];
+const MANAGEABLE_ROLES: UserRole[] = [
+  UserRole.PROVIDER,
+  UserRole.TECHNICIAN,
+  UserRole.CUSTOMER,
+];
 
 interface Actor {
   id: string;
@@ -29,8 +53,16 @@ const MEMBER_SELECT = {
   districtId: true,
   upazilaId: true,
   createdAt: true,
-  addresses: { select: { addressText: true, isDefault: true }, orderBy: { createdAt: 'asc' as const }, take: 5 },
-  moderationLog: { select: { action: true, reason: true, createdAt: true }, orderBy: { createdAt: 'desc' as const }, take: 10 },
+  addresses: {
+    select: { addressText: true, isDefault: true },
+    orderBy: { createdAt: 'asc' as const },
+    take: 5,
+  },
+  moderationLog: {
+    select: { action: true, reason: true, createdAt: true },
+    orderBy: { createdAt: 'desc' as const },
+    take: 10,
+  },
 } satisfies Prisma.UserSelect;
 
 @Injectable()
@@ -48,17 +80,31 @@ export class AdminMembersService {
   async create(data: CreateMemberDto) {
     const hasDistrict = data.districtId !== undefined;
     const hasUpazila = data.upazilaId !== undefined;
-    if (hasDistrict !== hasUpazila) throw new BadRequestException('Send the district and the upazila together');
-    if (hasDistrict && !this.locations.isValidLocation(data.districtId!, data.upazilaId!)) {
-      throw new BadRequestException('The upazila does not belong to the district');
+    if (hasDistrict !== hasUpazila)
+      throw new BadRequestException(
+        'Send the district and the upazila together',
+      );
+    if (
+      hasDistrict &&
+      !this.locations.isValidLocation(data.districtId!, data.upazilaId!)
+    ) {
+      throw new BadRequestException(
+        'The upazila does not belong to the district',
+      );
     }
 
-    const existing = await this.prisma.user.findUnique({ where: { mobileNumber: data.mobileNumber }, select: { role: true } });
+    const existing = await this.prisma.user.findUnique({
+      where: { mobileNumber: data.mobileNumber },
+      select: { role: true },
+    });
     if (existing) {
-      throw new ConflictException(`This phone number is already registered as ${existing.role.toLowerCase()}. A number can only have one role.`);
+      throw new ConflictException(
+        `This phone number is already registered as ${existing.role.toLowerCase()}. A number can only have one role.`,
+      );
     }
 
-    const role = data.role === 'PROVIDER' ? UserRole.PROVIDER : UserRole.CUSTOMER;
+    const role =
+      data.role === 'PROVIDER' ? UserRole.PROVIDER : UserRole.CUSTOMER;
     const user = await this.prisma.$transaction(async (tx) => {
       const created = await tx.user.create({
         data: {
@@ -75,8 +121,21 @@ export class AdminMembersService {
       if (role === UserRole.CUSTOMER) {
         await tx.customerProfile.create({ data: { userId: created.id } });
       } else {
-        const provider = await tx.providerProfile.create({ data: { userId: created.id, companyName: data.companyName?.trim() || null }, select: { id: true } });
-        if (hasDistrict) await tx.providerServiceArea.create({ data: { providerId: provider.id, districtId: data.districtId!, upazilaId: data.upazilaId! } });
+        const provider = await tx.providerProfile.create({
+          data: {
+            userId: created.id,
+            companyName: data.companyName?.trim() || null,
+          },
+          select: { id: true },
+        });
+        if (hasDistrict)
+          await tx.providerServiceArea.create({
+            data: {
+              providerId: provider.id,
+              districtId: data.districtId!,
+              upazilaId: data.upazilaId!,
+            },
+          });
       }
       return created;
     });
@@ -85,51 +144,112 @@ export class AdminMembersService {
 
   /** Everything staff need to know about one provider, technician or customer. */
   async getDetails(memberId: string) {
-    const member = await this.prisma.user.findUnique({ where: { id: memberId }, select: MEMBER_SELECT });
-    if (!member || !MANAGEABLE_ROLES.includes(member.role)) throw new NotFoundException('Member not found');
+    const member = await this.prisma.user.findUnique({
+      where: { id: memberId },
+      select: MEMBER_SELECT,
+    });
+    if (!member || !MANAGEABLE_ROLES.includes(member.role))
+      throw new NotFoundException('Member not found');
 
-    const base = { ...member, area: this.areaName(member.districtId, member.upazilaId) };
-    if (member.role === UserRole.PROVIDER) return { ...base, provider: await this.providerSection(memberId) };
-    if (member.role === UserRole.TECHNICIAN) return { ...base, technician: await this.technicianSection(memberId) };
+    const base = {
+      ...member,
+      area: this.areaName(member.districtId, member.upazilaId),
+    };
+    if (member.role === UserRole.PROVIDER)
+      return { ...base, provider: await this.providerSection(memberId) };
+    if (member.role === UserRole.TECHNICIAN)
+      return { ...base, technician: await this.technicianSection(memberId) };
     // A customer who is also a provider (one number, both sides) or who applied to be one: staff see the provider
     // side too, with its KYC to review.
-    const providerAccount = await this.prisma.providerProfile.findFirst({ where: { userId: memberId, ...providerAccountWhere() }, select: { id: true } });
-    return { ...base, customer: await this.customerSection(memberId), ...(providerAccount ? { provider: await this.providerSection(memberId) } : {}) };
+    const providerAccount = await this.prisma.providerProfile.findFirst({
+      where: { userId: memberId, ...providerAccountWhere() },
+      select: { id: true },
+    });
+    return {
+      ...base,
+      customer: await this.customerSection(memberId),
+      ...(providerAccount
+        ? { provider: await this.providerSection(memberId) }
+        : {}),
+    };
   }
 
   /**
    * Sets a provider's own commission percent. New orders, and orders they accept from now on, use it; an order
    * they already have keeps the percent it was given (Order.commissionRate).
    */
-  async setCommission(memberId: string, commissionRate: number) {
-    const updated = await this.prisma.providerProfile.updateMany({ where: { userId: memberId }, data: { commissionRate } });
+  async setCommission(memberId: string, commissionRate: number | null) {
+    const updated = await this.prisma.providerProfile.updateMany({
+      where: { userId: memberId },
+      data: { commissionRate },
+    });
     if (updated.count === 0) throw new NotFoundException('Provider not found');
     return this.getDetails(memberId);
   }
 
-  async moderate(actor: Actor, memberId: string, action: ModerationAction, reason?: string) {
-    if (actor.id === memberId) throw new ForbiddenException('You cannot moderate your own account');
+  /**
+   * Sets this provider's charge on orders they create themselves (Provider created), or null to follow the admin's
+   * one rule for every provider again. New orders only; orders they already have keep their percent.
+   */
+  async setOwnOrderCharge(memberId: string, rate: number | null) {
+    const updated = await this.prisma.providerProfile.updateMany({
+      where: { userId: memberId },
+      data: { ownOrderChargeRate: rate },
+    });
+    if (updated.count === 0) throw new NotFoundException('Provider not found');
+    return this.getDetails(memberId);
+  }
+
+  async moderate(
+    actor: Actor,
+    memberId: string,
+    action: ModerationAction,
+    reason?: string,
+  ) {
+    if (actor.id === memberId)
+      throw new ForbiddenException('You cannot moderate your own account');
     const isBanAction = action === 'BAN' || action === 'UNBAN';
     // Banning is the heaviest step, so it stays with admins; managers may restrict and block.
-    if (isBanAction && actor.role !== UserRole.ADMIN) throw new ForbiddenException('Only an admin can ban or unban');
+    if (isBanAction && actor.role !== UserRole.ADMIN)
+      throw new ForbiddenException('Only an admin can ban or unban');
 
-    const member = await this.prisma.user.findUnique({ where: { id: memberId }, select: { id: true, role: true, status: true, isRestricted: true } });
-    if (!member || !MANAGEABLE_ROLES.includes(member.role)) throw new NotFoundException('Member not found');
+    const member = await this.prisma.user.findUnique({
+      where: { id: memberId },
+      select: { id: true, role: true, status: true, isRestricted: true },
+    });
+    if (!member || !MANAGEABLE_ROLES.includes(member.role))
+      throw new NotFoundException('Member not found');
 
     const change = this.planChange(action, member);
 
     await this.prisma.$transaction(async (tx) => {
       await tx.user.update({ where: { id: memberId }, data: change });
-      await tx.userModerationLog.create({ data: { userId: memberId, actorId: actor.id, action, reason: reason?.trim() || null } });
+      await tx.userModerationLog.create({
+        data: {
+          userId: memberId,
+          actorId: actor.id,
+          action,
+          reason: reason?.trim() || null,
+        },
+      });
 
       // Locked-out people lose their sessions at once, so no refresh token keeps them signed in.
       if (change.status && change.status !== UserStatus.ACTIVE) {
-        await tx.refreshToken.updateMany({ where: { userId: memberId, revokedAt: null }, data: { revokedAt: new Date() } });
+        await tx.refreshToken.updateMany({
+          where: { userId: memberId, revokedAt: null },
+          data: { revokedAt: new Date() },
+        });
       }
       // A provider who is no longer fit to take orders stops being offered the ones still open.
-      if (change.isRestricted === true || (change.status && change.status !== UserStatus.ACTIVE)) {
+      if (
+        change.isRestricted === true ||
+        (change.status && change.status !== UserStatus.ACTIVE)
+      ) {
         await tx.orderOffer.updateMany({
-          where: { provider: { userId: memberId }, status: OfferStatus.OFFERED },
+          where: {
+            provider: { userId: memberId },
+            status: OfferStatus.OFFERED,
+          },
           data: { status: OfferStatus.WITHDRAWN, respondedAt: new Date() },
         });
       }
@@ -139,31 +259,45 @@ export class AdminMembersService {
   }
 
   /** What each action changes, and which state it is allowed to start from. */
-  private planChange(action: ModerationAction, member: { status: UserStatus; isRestricted: boolean }): Prisma.UserUpdateInput {
+  private planChange(
+    action: ModerationAction,
+    member: { status: UserStatus; isRestricted: boolean },
+  ): Prisma.UserUpdateInput {
     switch (action) {
       case 'RESTRICT':
         return { isRestricted: true };
       case 'UNRESTRICT':
         return { isRestricted: false };
       case 'BLOCK':
-        if (member.status === UserStatus.BANNED) throw new BadRequestException('This account is banned');
+        if (member.status === UserStatus.BANNED)
+          throw new BadRequestException('This account is banned');
         return { status: UserStatus.SUSPENDED };
       case 'UNBLOCK':
-        if (member.status !== UserStatus.SUSPENDED) throw new BadRequestException('This account is not blocked');
+        if (member.status !== UserStatus.SUSPENDED)
+          throw new BadRequestException('This account is not blocked');
         return { status: UserStatus.ACTIVE };
       case 'BAN':
         return { status: UserStatus.BANNED };
       case 'UNBAN':
-        if (member.status !== UserStatus.BANNED) throw new BadRequestException('This account is not banned');
+        if (member.status !== UserStatus.BANNED)
+          throw new BadRequestException('This account is not banned');
         return { status: UserStatus.ACTIVE };
     }
   }
 
   private areaName(districtId: number | null, upazilaId: number | null) {
     if (!districtId) return null;
-    const district = this.locations.getDistricts().find((item) => item.id === districtId);
-    const upazila = upazilaId ? this.locations.getUpazilas(districtId).find((item) => item.id === upazilaId) : null;
-    return [upazila?.bnName, district?.bnName].filter(Boolean).join(', ') || null;
+    const district = this.locations
+      .getDistricts()
+      .find((item) => item.id === districtId);
+    const upazila = upazilaId
+      ? this.locations
+          .getUpazilas(districtId)
+          .find((item) => item.id === upazilaId)
+      : null;
+    return (
+      [upazila?.bnName, district?.bnName].filter(Boolean).join(', ') || null
+    );
   }
 
   private async providerSection(userId: string) {
@@ -180,34 +314,78 @@ export class AdminMembersService {
         isBlockedForNegative: true,
         walletBalance: true,
         commissionRate: true,
+        ownOrderChargeRate: true,
         totalCompletedOrders: true,
         kyc: { select: { status: true } },
         serviceAreas: { select: { districtId: true, upazilaId: true } },
         technicianProfiles: {
-          select: { lastLoginAt: true, user: { select: { id: true, name: true, username: true, mobileNumber: true, status: true, profilePhoto: true } } },
+          select: {
+            lastLoginAt: true,
+            user: {
+              select: {
+                id: true,
+                name: true,
+                username: true,
+                mobileNumber: true,
+                status: true,
+                profilePhoto: true,
+              },
+            },
+          },
         },
         _count: { select: { orders: true } },
       },
     });
     if (!profile) return null;
 
-    const [skills, ordersByStatus, reviews] = await Promise.all([
-      this.prisma.serviceAssignee.count({ where: { userId, isActive: true } }),
-      this.prisma.order.groupBy({ by: ['orderStatus'], where: { providerId: profile.id, NOT: { orderStatus: OrderStatus.PENDING } }, _count: true }),
-      reviewsFromCustomers(this.prisma, { providerId: profile.id }),
-    ]);
+    const [skills, ordersByStatus, reviews, globalOwnOrderCharge, globalCommission] =
+      await Promise.all([
+        this.prisma.serviceAssignee.count({
+          where: { userId, isActive: true },
+        }),
+        this.prisma.order.groupBy({
+          by: ['orderStatus'],
+          where: {
+            providerId: profile.id,
+            NOT: { orderStatus: OrderStatus.PENDING },
+          },
+          _count: true,
+        }),
+        reviewsFromCustomers(this.prisma, { providerId: profile.id }),
+        readProviderOrderCharge(this.prisma),
+        readPlatformOrderCommission(this.prisma),
+      ]);
 
-    const { walletBalance, serviceAreas, technicianProfiles, ...rest } = profile;
+    const { walletBalance, serviceAreas, technicianProfiles, ...rest } =
+      profile;
     return {
       ...rest,
       rating: Number(rest.rating),
-      commissionRate: Number(rest.commissionRate),
+      // Orders from the platform: their own percent, or the global rate while none is set (shown as such).
+      commissionRate: effectiveCommissionRate(rest.commissionRate, globalCommission),
+      commissionIsCustom: rest.commissionRate !== null,
+      globalCommissionRate: globalCommission,
+      // Orders this provider creates themselves: their own percent if set (null = the global rule, shown beside it).
+      ownOrderChargeRate:
+        rest.ownOrderChargeRate === null
+          ? null
+          : Number(rest.ownOrderChargeRate),
+      globalOwnOrderChargeRate:
+        providerOrderChargePercent(globalOwnOrderCharge),
       // A negative wallet is what the provider owes the platform.
       dueAmount: Number(walletBalance) < 0 ? -Number(walletBalance) : 0,
       skillCount: skills,
-      areas: serviceAreas.map((area) => ({ ...area, name: this.areaName(area.districtId, area.upazilaId) })),
-      technicians: technicianProfiles.map((technician) => ({ ...technician.user, lastLoginAt: technician.lastLoginAt })),
-      ordersByStatus: Object.fromEntries(ordersByStatus.map((row) => [row.orderStatus, row._count])),
+      areas: serviceAreas.map((area) => ({
+        ...area,
+        name: this.areaName(area.districtId, area.upazilaId),
+      })),
+      technicians: technicianProfiles.map((technician) => ({
+        ...technician.user,
+        lastLoginAt: technician.lastLoginAt,
+      })),
+      ordersByStatus: Object.fromEntries(
+        ordersByStatus.map((row) => [row.orderStatus, row._count]),
+      ),
       reviews,
     };
   }
@@ -223,12 +401,21 @@ export class AdminMembersService {
         id: true,
         lastLoginAt: true,
         providerAgencyId: true,
-        providerAgency: { select: { companyName: true, user: { select: { name: true, username: true, mobileNumber: true } } } },
+        providerAgency: {
+          select: {
+            companyName: true,
+            user: {
+              select: { name: true, username: true, mobileNumber: true },
+            },
+          },
+        },
         _count: { select: { orders: true } },
       },
     });
     // Customers review the order; the technician who did it sees those reviews on their profile.
-    const reviews = await reviewsFromCustomers(this.prisma, { order: { technicianId: profile.id } });
+    const reviews = await reviewsFromCustomers(this.prisma, {
+      order: { technicianId: profile.id },
+    });
     return (
       profile && {
         // The technician profile id is what "change provider" is sent against.
@@ -238,7 +425,10 @@ export class AdminMembersService {
         reviews,
         provider: profile.providerAgency && {
           profileId: profile.providerAgencyId,
-          name: profile.providerAgency.companyName || profile.providerAgency.user.name || profile.providerAgency.user.username,
+          name:
+            profile.providerAgency.companyName ||
+            profile.providerAgency.user.name ||
+            profile.providerAgency.user.username,
           mobileNumber: profile.providerAgency.user.mobileNumber,
         },
       }
@@ -246,13 +436,28 @@ export class AdminMembersService {
   }
 
   private async customerSection(userId: string) {
-    const profile = await this.prisma.customerProfile.findUnique({ where: { userId }, select: { id: true, rating: true } });
-    if (!profile) return { orderCount: 0, ordersByStatus: {}, totalSpent: 0, rating: 0, recentOrders: [], services: [], ratings: [] };
+    const profile = await this.prisma.customerProfile.findUnique({
+      where: { userId },
+      select: { id: true, rating: true },
+    });
+    if (!profile)
+      return {
+        orderCount: 0,
+        ordersByStatus: {},
+        totalSpent: 0,
+        rating: 0,
+        recentOrders: [],
+        services: [],
+        ratings: [],
+      };
 
     const where = { customerId: profile.id };
     const [byStatus, spent, recent, perService, ratings] = await Promise.all([
       this.prisma.order.groupBy({ by: ['orderStatus'], where, _count: true }),
-      this.prisma.order.aggregate({ where: { ...where, orderStatus: OrderStatus.COMPLETED }, _sum: { totalPrice: true } }),
+      this.prisma.order.aggregate({
+        where: { ...where, orderStatus: OrderStatus.COMPLETED },
+        _sum: { totalPrice: true },
+      }),
       this.prisma.order.findMany({
         where,
         orderBy: { createdAt: 'desc' },
@@ -264,20 +469,38 @@ export class AdminMembersService {
           totalPrice: true,
           createdAt: true,
           service: { select: { name: true } },
-          provider: { select: { companyName: true, user: { select: { name: true, username: true } } } },
+          provider: {
+            select: {
+              companyName: true,
+              user: { select: { name: true, username: true } },
+            },
+          },
         },
       }),
-      this.prisma.order.groupBy({ by: ['serviceId'], where, _count: true, orderBy: { _count: { serviceId: 'desc' } }, take: 8 }),
+      this.prisma.order.groupBy({
+        by: ['serviceId'],
+        where,
+        _count: true,
+        orderBy: { _count: { serviceId: 'desc' } },
+        take: 8,
+      }),
       // What providers and technicians said about this customer after their orders.
       ratingsFromProviders(this.prisma, where),
     ]);
 
-    const serviceNames = await this.prisma.service.findMany({ where: { id: { in: perService.map((row) => row.serviceId) } }, select: { id: true, name: true } });
-    const nameById = new Map(serviceNames.map((service) => [service.id, service.name]));
+    const serviceNames = await this.prisma.service.findMany({
+      where: { id: { in: perService.map((row) => row.serviceId) } },
+      select: { id: true, name: true },
+    });
+    const nameById = new Map(
+      serviceNames.map((service) => [service.id, service.name]),
+    );
 
     return {
       orderCount: byStatus.reduce((sum, row) => sum + row._count, 0),
-      ordersByStatus: Object.fromEntries(byStatus.map((row) => [row.orderStatus, row._count])),
+      ordersByStatus: Object.fromEntries(
+        byStatus.map((row) => [row.orderStatus, row._count]),
+      ),
       totalSpent: Number(spent._sum.totalPrice ?? 0),
       rating: Number(profile.rating),
       ratings,
@@ -288,9 +511,15 @@ export class AdminMembersService {
         totalPrice: Number(order.totalPrice),
         createdAt: order.createdAt,
         serviceName: order.service.name,
-        providerName: order.provider.companyName || order.provider.user.name || order.provider.user.username,
+        providerName:
+          order.provider.companyName ||
+          order.provider.user.name ||
+          order.provider.user.username,
       })),
-      services: perService.map((row) => ({ name: nameById.get(row.serviceId) ?? 'Service', count: row._count })),
+      services: perService.map((row) => ({
+        name: nameById.get(row.serviceId) ?? 'Service',
+        count: row._count,
+      })),
     };
   }
 }

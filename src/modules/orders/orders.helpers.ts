@@ -90,13 +90,29 @@ export function commissionFor(amount: number, percent: number | Prisma.Decimal):
   return Math.round((amount * Number(percent)) / 100);
 }
 
-/** The commission percent a provider is on now. */
+/** The global commission on orders from the platform, until an admin changes it (PlatformSetting). */
+export const DEFAULT_PLATFORM_ORDER_COMMISSION = 50;
+
+type GlobalCommissionReader = { platformSetting: { findUnique: Prisma.TransactionClient['platformSetting']['findUnique'] } };
+
+/** The admin's global commission on orders from the platform, for providers without their own rate. */
+export async function readPlatformOrderCommission(client: GlobalCommissionReader): Promise<number> {
+  const row = await client.platformSetting.findUnique({ where: { id: 'default' }, select: { platformOrderCommissionRate: true } });
+  return row ? Number(row.platformOrderCommissionRate) : DEFAULT_PLATFORM_ORDER_COMMISSION;
+}
+
+/** A provider's rate on platform orders: their own if an admin set one, else the global rate. Never 0 by accident. */
+export const effectiveCommissionRate = (ownRate: Prisma.Decimal | number | null, globalRate: number): number =>
+  ownRate === null ? globalRate : Number(ownRate);
+
+/** The commission percent a provider is on now for orders from the platform (their own, or the global rate). */
 export async function providerCommissionPercent(
-  client: { providerProfile: { findUnique: Prisma.TransactionClient['providerProfile']['findUnique'] } },
+  client: { providerProfile: { findUnique: Prisma.TransactionClient['providerProfile']['findUnique'] } } & GlobalCommissionReader,
   providerId: string,
 ): Promise<number> {
   const provider = await client.providerProfile.findUnique({ where: { id: providerId }, select: { commissionRate: true } });
-  return provider ? Number(provider.commissionRate) : DEFAULT_COMMISSION_PERCENT;
+  if (provider && provider.commissionRate !== null) return Number(provider.commissionRate);
+  return readPlatformOrderCommission(client);
 }
 
 export interface PriceCalculationInput {

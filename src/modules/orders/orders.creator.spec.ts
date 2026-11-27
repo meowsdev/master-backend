@@ -129,6 +129,39 @@ describe("a provider's own order", () => {
     );
   });
 
+  it("uses this provider's own percent when the admin set one, even while the global charge is off", async () => {
+    const { service, prisma } = build({
+      providerOrderChargeEnabled: false,
+      providerOrderChargeRate: 10,
+    });
+    prisma.providerProfile.findUnique.mockResolvedValue({
+      id: 'p1',
+      walletBalance: 100,
+      commissionRate: 15,
+      ownOrderChargeRate: 3,
+    });
+    await service.create(order, undefined, undefined, {
+      origin: providerOrigin,
+    });
+    expect(created(prisma)).toEqual(
+      expect.objectContaining({ commissionRate: 3, adminCommission: 30 }),
+    );
+  });
+
+  it('keeps the platform order percent (15%) for orders that come from the platform', async () => {
+    const { service, prisma } = build(null);
+    prisma.providerProfile.findUnique.mockResolvedValue({
+      id: 'p1',
+      walletBalance: 100,
+      commissionRate: 15,
+      ownOrderChargeRate: 3,
+    });
+    await service.create(order, { id: 'u-c', role: 'CUSTOMER' as never });
+    expect(created(prisma)).toEqual(
+      expect.objectContaining({ commissionRate: 15, adminCommission: 150 }),
+    );
+  });
+
   it('is refused while the provider owes a due', async () => {
     const { service, prisma } = build(null, -200);
     await expect(
