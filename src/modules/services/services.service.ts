@@ -1,8 +1,10 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import slugify from 'slugify';
 import { CreateCategoryDto, UpdateCategoryDto } from './dto/category.dto';
@@ -73,12 +75,23 @@ export class ServicesService {
   }
 
   async updateSingleCategory(id: string, data: UpdateCategoryDto) {
-    return this.prisma.serviceCategory.update({
-      where: {
-        id,
-      },
-      data,
-    });
+    try {
+      return await this.prisma.serviceCategory.update({
+        where: {
+          id,
+        },
+        data,
+      });
+    } catch (error) {
+      // Main service names are unique: say so instead of failing with a server error.
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        throw new ConflictException('Another main service already has this name');
+      }
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025') {
+        throw new NotFoundException('Main service not found');
+      }
+      throw error;
+    }
   }
 
   async deleteSingleCategory(id: string) {
