@@ -57,7 +57,17 @@ export class ApproveExpenseClaimDto {
   note?: string;
 }
 
+/** Sending costs back: a note on what to fix and, optionally, the amounts the reviewer thinks are right. */
 export class RejectExpenseClaimDto {
+  @ApiPropertyOptional({ type: [ExpenseItemDto] })
+  @IsOptional()
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(20)
+  @ValidateNested({ each: true })
+  @Type(() => ExpenseItemDto)
+  items?: ExpenseItemDto[];
+
   @ApiPropertyOptional({ example: 'No receipt for the parts' })
   @IsOptional()
   @IsString()

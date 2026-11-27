@@ -1078,10 +1078,17 @@ model OrderAssignmentLog {
   @@index([orderId, createdAt])
 }
 
+/// A claim moves between hands until an admin approves it:
+/// technician sends → PROVIDER_REVIEW → provider accepts (amounts may change) → PENDING (admin)
+/// provider returns it → RETURNED_TO_TECHNICIAN → technician changes it and sends again → PROVIDER_REVIEW
+/// admin returns it → PROVIDER_REVIEW again (with the admin's suggested amounts), for the provider to fix.
+/// REJECTED: only claims from before this flow (an admin rejection used to end the claim).
 enum ExpenseClaimStatus {
   PENDING
   APPROVED
   REJECTED
+  PROVIDER_REVIEW
+  RETURNED_TO_TECHNICIAN
 }
 
 /// What the provider / technician spent on a finished job (parts bought, other costs). An admin reviews it,
@@ -1090,9 +1097,16 @@ model OrderExpenseClaim {
   id               String             @id @default(uuid())
   orderId          String
   submittedById    String
-  /// [{ label, amount }] as the provider sent it.
+  /// [{ label, amount }]: the amounts as they stand now (the last person to change them). The original and every
+  /// change are in `history`.
   items            Json
   claimedTotal     Decimal            @db.Decimal(10, 2)
+  /// Sent by the order's technician: it goes to the provider first, and the provider may send it back to them.
+  isFromTechnician Boolean            @default(false)
+  /// Every step: [{ action, byId, byRole, items, total, note, at }], oldest first. Empty on older claims.
+  history          Json               @default("[]")
+  /// The provider's last note (to the technician when sending it back, or to the admin when accepting).
+  providerNote     String?            @db.VarChar(300)
   /// [{ label, amount }] after the admin review; set on approval.
   approvedItems    Json?
   approvedTotal    Decimal?           @db.Decimal(10, 2)

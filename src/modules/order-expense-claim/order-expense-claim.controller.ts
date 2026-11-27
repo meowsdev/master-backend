@@ -46,8 +46,29 @@ export class OrderExpenseClaimController {
 
   @Patch('expense-claims/:claimId/reject')
   @Roles(UserRole.ADMIN)
-  @ApiOperation({ summary: 'Admin rejects; the provider may send corrected costs' })
+  @ApiOperation({ summary: 'Admin sends it back to the provider, with a note and optionally the amounts they think are right' })
   reject(@Param('claimId', new ParseUUIDPipe()) claimId: string, @Body() dto: RejectExpenseClaimDto, @Req() req: AuthenticatedRequest) {
-    return this.claims.reject(claimId, dto.note, req.user);
+    return this.claims.reject(claimId, dto, req.user);
+  }
+
+  @Patch('expense-claims/:claimId/provider-accept')
+  @Roles(UserRole.PROVIDER)
+  @ApiOperation({ summary: 'Provider accepts the costs (amounts may change) and sends them to an admin' })
+  providerAccept(@Param('claimId', new ParseUUIDPipe()) claimId: string, @Body() dto: ApproveExpenseClaimDto, @Req() req: AuthenticatedRequest) {
+    return this.claims.providerAccept(claimId, dto, req.user);
+  }
+
+  @Patch('expense-claims/:claimId/provider-return')
+  @Roles(UserRole.PROVIDER)
+  @ApiOperation({ summary: "Provider sends the technician's costs back to them with a note" })
+  providerReturn(@Param('claimId', new ParseUUIDPipe()) claimId: string, @Body() dto: RejectExpenseClaimDto, @Req() req: AuthenticatedRequest) {
+    return this.claims.providerReturn(claimId, dto.note, req.user);
+  }
+
+  @Patch('expense-claims/:claimId/resubmit')
+  @Roles(UserRole.TECHNICIAN)
+  @ApiOperation({ summary: 'Technician changes the costs the provider sent back and sends them again' })
+  resubmit(@Param('claimId', new ParseUUIDPipe()) claimId: string, @Body() dto: SubmitExpenseClaimDto, @Req() req: AuthenticatedRequest) {
+    return this.claims.resubmit(claimId, dto, req.user);
   }
 }

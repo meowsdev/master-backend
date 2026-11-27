@@ -3,9 +3,35 @@ import { ExpenseClaimStatus, ExtraChargeStatus, Prisma, RevisionStatus, UserRole
 import { PrismaService } from '../../prisma/prisma.service';
 import { isOrderStaff } from '../auth/role-policy';
 import { commissionFor } from '../orders/orders.helpers';
-import { ApproveExpenseClaimDto, ExpenseItemDto, SubmitExpenseClaimDto } from './dto/expense-claim.dto';
+import { ApproveExpenseClaimDto, ExpenseItemDto, RejectExpenseClaimDto, SubmitExpenseClaimDto } from './dto/expense-claim.dto';
 
 type Actor = { id: string; role: UserRole | string };
+
+/** One step of a claim's journey, kept on the claim (`history`) so everyone sees who changed what. */
+type ClaimStep = {
+  action: 'SUBMITTED' | 'RESUBMITTED' | 'PROVIDER_ACCEPTED' | 'PROVIDER_RETURNED' | 'ADMIN_RETURNED' | 'ADMIN_APPROVED';
+  byId: string;
+  byRole: 'TECHNICIAN' | 'PROVIDER' | 'ADMIN';
+  items: Array<{ label: string; amount: number }>;
+  total: number;
+  note: string | null;
+  at: string;
+};
+
+/** A claim still in someone's hands: while one is open, no new claim can be sent for the order. */
+const OPEN_STATUSES = [ExpenseClaimStatus.PENDING, ExpenseClaimStatus.PROVIDER_REVIEW, ExpenseClaimStatus.RETURNED_TO_TECHNICIAN];
+
+const step = (action: ClaimStep['action'], actor: Actor, byRole: ClaimStep['byRole'], items: ClaimStep['items'], note?: string | null): ClaimStep => ({
+  action,
+  byId: actor.id,
+  byRole,
+  items,
+  total: sumOf(items),
+  note: note?.trim() || null,
+  at: new Date().toISOString(),
+});
+
+const withStep = (history: Prisma.JsonValue, next: ClaimStep) => [...(Array.isArray(history) ? history : []), next] as unknown as Prisma.InputJsonValue;
 
 const sumOf = (items: ExpenseItemDto[]) => Math.round(items.reduce((total, item) => total + item.amount, 0) * 100) / 100;
 const cleanItems = (items: ExpenseItemDto[]) => items.map(({ label, amount }) => ({ label: label.trim(), amount }));
@@ -33,10 +59,14 @@ const ORDER_SELECT = {
 } satisfies Prisma.OrderSelect;
 
 /*
- * Parts and costs of a finished job. The provider (or their technician) sends what they spent; an admin
- * reviews it, may raise or lower each amount, and approves or rejects. On approval the order's commission
- * is worked out again on (total - approved costs). For a cash job the commission already sits in the
- * provider's due, so the difference is given back to their wallet.
+ * Parts and costs of a finished job, passed hand to hand until an admin approves them:
+ * - the technician sends → the provider reviews: changes the amounts and accepts (→ admin), or sends it back
+ *   to the technician with a note, who changes it and sends it again (→ provider);
+ * - the provider sends → straight to the admin;
+ * - the admin approves (amounts may change) or sends it back to the provider (amounts may change too), who
+ *   fixes it and accepts again, or passes it back to the technician.
+ * On approval the order's commission is worked out again on (total - approved costs). For a cash job the
+ * commission already sits in the provider's due, so the difference is given back to their wallet.
  */
 @Injectable()
 export class OrderExpenseClaimService {
@@ -65,10 +95,10 @@ export class OrderExpenseClaimService {
     if (order.revisions.length > 0) return { reason: 'Costs cannot be sent while a revision is open', isConflict: false };
 
     const [pending, lastApproved] = await Promise.all([
-      this.prisma.orderExpenseClaim.count({ where: { orderId: order.id, status: ExpenseClaimStatus.PENDING } }),
+      this.prisma.orderExpenseClaim.count({ where: { orderId: order.id, status: { in: OPEN_STATUSES } } }),
       this.prisma.orderExpenseClaim.findFirst({ where: { orderId: order.id, status: ExpenseClaimStatus.APPROVED }, orderBy: { reviewedAt: 'desc' }, select: { reviewedAt: true, createdAt: true } }),
     ]);
-    if (pending > 0) return { reason: 'Your costs are already waiting for admin review', isConflict: true };
+    if (pending > 0) return { reason: 'The costs of this order are already being reviewed', isConflict: true };
     if (lastApproved) {
       const billedSince = await this.prisma.extraChargeRequest.count({
         where: { orderId: order.id, status: ExtraChargeStatus.APPROVED, createdAt: { gt: lastApproved.reviewedAt ?? lastApproved.createdAt } },
@@ -87,21 +117,108 @@ export class OrderExpenseClaimService {
     return { canSubmit: block === null, reason: block?.reason ?? null, approvedCosts };
   }
 
+  /** The technician's costs go to the provider first; the provider's go straight to an admin. */
   async submit(orderId: string, dto: SubmitExpenseClaimDto, actor: Actor) {
     const order = await this.loadOrder(orderId);
-    const isWorkingOnOrder = order.provider.userId === actor.id || order.technician?.userId === actor.id;
-    if (!isWorkingOnOrder) throw new ForbiddenException('Only the provider or technician of this order can send its costs');
+    const isProvider = order.provider.userId === actor.id;
+    const isTechnician = !isProvider && order.technician?.userId === actor.id;
+    if (!isProvider && !isTechnician) throw new ForbiddenException('Only the provider or technician of this order can send its costs');
     const block = await this.submitBlock(order);
     if (block) throw block.isConflict ? new ConflictException(block.reason) : new BadRequestException(block.reason);
 
     const items = cleanItems(dto.items);
     if (items.some((item) => item.amount <= 0)) throw new BadRequestException('Every cost needs an amount');
     const claimedTotal = sumOf(items);
-    if ((await this.approvedCostsSoFar(orderId)) + claimedTotal > Number(order.totalPrice)) {
+    await this.assertWithinTotal(order, claimedTotal);
+
+    return this.prisma.orderExpenseClaim.create({
+      data: {
+        orderId,
+        submittedById: actor.id,
+        items,
+        claimedTotal,
+        isFromTechnician: isTechnician,
+        status: isTechnician ? ExpenseClaimStatus.PROVIDER_REVIEW : ExpenseClaimStatus.PENDING,
+        history: [step('SUBMITTED', actor, isTechnician ? 'TECHNICIAN' : 'PROVIDER', items)] as unknown as Prisma.InputJsonValue,
+      },
+    });
+  }
+
+  /** Costs (with those approved before) can never be more than the order's bill. */
+  private async assertWithinTotal(order: { id: string; totalPrice: Prisma.Decimal | number }, costs: number) {
+    if ((await this.approvedCostsSoFar(order.id)) + costs > Number(order.totalPrice)) {
       throw new BadRequestException('Costs cannot be more than the order total');
     }
+  }
 
-    return this.prisma.orderExpenseClaim.create({ data: { orderId, submittedById: actor.id, items, claimedTotal } });
+  private async loadClaim(claimId: string) {
+    const claim = await this.prisma.orderExpenseClaim.findUnique({
+      where: { id: claimId },
+      select: { id: true, orderId: true, status: true, isFromTechnician: true, history: true, items: true },
+    });
+    if (!claim) throw new NotFoundException('Expense claim not found');
+    return { claim, order: await this.loadOrder(claim.orderId) };
+  }
+
+  /** Moves a claim on only if it is still where the caller saw it, so a double click (or two people) applies a step once. */
+  private async moveClaim(claimId: string, from: ExpenseClaimStatus, data: Prisma.OrderExpenseClaimUncheckedUpdateManyInput) {
+    const moved = await this.prisma.orderExpenseClaim.updateMany({ where: { id: claimId, status: from }, data });
+    if (moved.count === 0) throw new ConflictException('This claim has already moved on. Refresh and try again.');
+    return this.prisma.orderExpenseClaim.findUniqueOrThrow({ where: { id: claimId } });
+  }
+
+  /** The order's provider: accept the costs (changed as they see fit) and send them to an admin. */
+  async providerAccept(claimId: string, dto: ApproveExpenseClaimDto, actor: Actor) {
+    const { claim, order } = await this.loadClaim(claimId);
+    if (order.provider.userId !== actor.id) throw new ForbiddenException('Only the provider of this order can review its costs');
+    if (claim.status !== ExpenseClaimStatus.PROVIDER_REVIEW) throw new ConflictException('These costs are not waiting for you');
+
+    const items = cleanItems(dto.items);
+    const total = sumOf(items);
+    if (total <= 0) throw new BadRequestException('The costs need at least one amount');
+    await this.assertWithinTotal(order, total);
+
+    return this.moveClaim(claimId, ExpenseClaimStatus.PROVIDER_REVIEW, {
+      status: ExpenseClaimStatus.PENDING,
+      items,
+      claimedTotal: total,
+      providerNote: dto.note?.trim() || null,
+      history: withStep(claim.history, step('PROVIDER_ACCEPTED', actor, 'PROVIDER', items, dto.note)),
+    });
+  }
+
+  /** The order's provider: send the technician's costs back to them, with a note on what to fix. */
+  async providerReturn(claimId: string, note: string | undefined, actor: Actor) {
+    const { claim, order } = await this.loadClaim(claimId);
+    if (order.provider.userId !== actor.id) throw new ForbiddenException('Only the provider of this order can review its costs');
+    if (claim.status !== ExpenseClaimStatus.PROVIDER_REVIEW) throw new ConflictException('These costs are not waiting for you');
+    if (!claim.isFromTechnician) throw new BadRequestException('You sent these costs yourself: change them and send them again');
+    if (!order.technician) throw new BadRequestException('This order has no technician now to send the costs back to');
+
+    return this.moveClaim(claimId, ExpenseClaimStatus.PROVIDER_REVIEW, {
+      status: ExpenseClaimStatus.RETURNED_TO_TECHNICIAN,
+      providerNote: note?.trim() || null,
+      history: withStep(claim.history, step('PROVIDER_RETURNED', actor, 'PROVIDER', claim.items as ClaimStep['items'], note)),
+    });
+  }
+
+  /** The order's technician: change the costs the provider sent back and send them to the provider again. */
+  async resubmit(claimId: string, dto: SubmitExpenseClaimDto, actor: Actor) {
+    const { claim, order } = await this.loadClaim(claimId);
+    if (order.technician?.userId !== actor.id) throw new ForbiddenException('Only the technician of this order can send these costs again');
+    if (claim.status !== ExpenseClaimStatus.RETURNED_TO_TECHNICIAN) throw new ConflictException('These costs were not sent back to you');
+
+    const items = cleanItems(dto.items);
+    if (items.some((item) => item.amount <= 0)) throw new BadRequestException('Every cost needs an amount');
+    const total = sumOf(items);
+    await this.assertWithinTotal(order, total);
+
+    return this.moveClaim(claimId, ExpenseClaimStatus.RETURNED_TO_TECHNICIAN, {
+      status: ExpenseClaimStatus.PROVIDER_REVIEW,
+      items,
+      claimedTotal: total,
+      history: withStep(claim.history, step('RESUBMITTED', actor, 'TECHNICIAN', items)),
+    });
   }
 
   /** The order's provider and technician, and staff. The customer never sees the provider's costs. */
@@ -114,9 +231,7 @@ export class OrderExpenseClaimService {
 
   /** Admin (guarded in the controller): approve with the reviewed amounts; the commission is worked out again. */
   async approve(claimId: string, dto: ApproveExpenseClaimDto, actor: Actor) {
-    const claim = await this.prisma.orderExpenseClaim.findUnique({ where: { id: claimId }, select: { id: true, orderId: true } });
-    if (!claim) throw new NotFoundException('Expense claim not found');
-    const order = await this.loadOrder(claim.orderId);
+    const { claim, order } = await this.loadClaim(claimId);
 
     const approvedItems = cleanItems(dto.items);
     const approvedTotal = sumOf(approvedItems);
@@ -148,6 +263,7 @@ export class OrderExpenseClaimService {
           reviewedAt: new Date(),
           commissionBefore,
           commissionAfter,
+          history: withStep(claim.history, step('ADMIN_APPROVED', actor, 'ADMIN', approvedItems, dto.note)),
         },
       });
       if (claimed.count === 0) throw new ConflictException('This claim was already reviewed');
@@ -181,13 +297,24 @@ export class OrderExpenseClaimService {
     });
   }
 
-  /** Admin (guarded in the controller): turn it down; the provider may send corrected costs. */
-  async reject(claimId: string, note: string | undefined, actor: Actor) {
-    const claimed = await this.prisma.orderExpenseClaim.updateMany({
-      where: { id: claimId, status: ExpenseClaimStatus.PENDING },
-      data: { status: ExpenseClaimStatus.REJECTED, reviewNote: note?.trim() || null, reviewedById: actor.id, reviewedAt: new Date() },
+  /**
+   * Admin (guarded in the controller): send it back to the provider, with a note and, if given, the amounts the
+   * admin thinks are right. The provider fixes it and accepts again, or passes it back to the technician.
+   */
+  async reject(claimId: string, dto: RejectExpenseClaimDto, actor: Actor) {
+    const { claim, order } = await this.loadClaim(claimId);
+    if (claim.status !== ExpenseClaimStatus.PENDING) throw new ConflictException('This claim was already reviewed or does not exist');
+
+    const suggested = dto.items ? cleanItems(dto.items) : null;
+    if (suggested) await this.assertWithinTotal(order, sumOf(suggested));
+
+    return this.moveClaim(claimId, ExpenseClaimStatus.PENDING, {
+      status: ExpenseClaimStatus.PROVIDER_REVIEW,
+      ...(suggested ? { items: suggested, claimedTotal: sumOf(suggested) } : {}),
+      reviewNote: dto.note?.trim() || null,
+      reviewedById: actor.id,
+      reviewedAt: new Date(),
+      history: withStep(claim.history, step('ADMIN_RETURNED', actor, 'ADMIN', suggested ?? (claim.items as ClaimStep['items']), dto.note)),
     });
-    if (claimed.count === 0) throw new ConflictException('This claim was already reviewed or does not exist');
-    return this.prisma.orderExpenseClaim.findUniqueOrThrow({ where: { id: claimId } });
   }
 }
