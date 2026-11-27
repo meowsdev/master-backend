@@ -261,6 +261,7 @@ model ProviderProfile {
   walletCredits       WalletCredit[]
   withdrawalRequests  WithdrawalRequest[]
   dueReminders        DueReminder[]
+  dispatchStats       ProviderDispatchStats?
 }
 
 model CounselorProfile {
@@ -1232,4 +1233,43 @@ model PlatformSetting {
   providerOrderChargeRate    Decimal  @default(10.0) @db.Decimal(5, 2)
   updatedAt                  DateTime @updatedAt
   updatedById                String?
+}
+
+/// How new orders are shared out among providers. One row only, id "default". Off: the old order (rating, then
+/// completed orders). On: each provider's dispatch score, made of the factors below, each counted as much as its
+/// weight (0 = left out, 10 = counts the most). Meanings in order-dispatch/ranking-rules.ts.
+model DispatchSetting {
+  id             String   @id @default("default")
+  isEnabled      Boolean  @default(false)
+  responseRate   Int      @default(8)
+  responseSpeed  Int      @default(5)
+  successScore   Int      @default(8)
+  rating         Int      @default(6)
+  behaviour      Int      @default(7)
+  level          Int      @default(4)
+  experience     Int      @default(3)
+  workload       Int      @default(5)
+  newcomer       Int      @default(3)
+  updatedAt      DateTime @updatedAt
+  updatedById    String?
+}
+
+/// A provider's numbers for the dispatch score, worked out every 15 minutes so placing an order stays fast.
+/// null = no data yet (no offer, no finished order); the score then counts that factor as middling.
+model ProviderDispatchStats {
+  providerId         String        @id
+  responseRate       Int?
+  /// Average seconds from an offer to the provider's answer (accept or decline), last 60 days.
+  avgResponseSeconds Int?
+  successScore       Decimal?      @db.Decimal(3, 1)
+  /// Public review average; null before the first review.
+  rating             Decimal?      @db.Decimal(3, 2)
+  /// 0-100: dues paid on time. Lower for a negative wallet now and for due reminders in the last 60 days.
+  behaviour          Int           @default(100)
+  level              ProviderLevel @default(LEVEL_0)
+  completedOrders    Int           @default(0)
+  activeOrders       Int           @default(0)
+  refreshedAt        DateTime      @default(now())
+
+  provider ProviderProfile @relation(fields: [providerId], references: [id], onDelete: Cascade)
 }

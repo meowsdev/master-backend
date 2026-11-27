@@ -5,11 +5,13 @@ import { USER_EVENT_PUBLISHER } from './user-events';
 import { isCustomServiceId } from '../order-placement/custom-service';
 import { commissionFor, providerCommissionPercent } from '../orders/orders.helpers';
 import type { UserEventPublisher } from './user-events';
+import { ProviderRankingService, offerSeconds } from './provider-ranking.service';
+import { RankingWeights, dispatchScore, rankProviders } from './ranking-rules';
 
 /** How many providers hear about a new order at once. */
 const providersPerWave = () => Number(process.env.DISPATCH_PROVIDERS_PER_WAVE) || 5;
-/** How long a provider has to answer before the order moves on to the next group. */
-const offerSeconds = () => Number(process.env.DISPATCH_OFFER_SECONDS) || 90;
+/** With ranking on, at most this many eligible providers are scored to pick each wave. */
+const RANKING_POOL = 200;
 
 type Tx = Prisma.TransactionClient;
 
@@ -26,7 +28,53 @@ export class OrderDispatchService {
   constructor(
     private readonly prisma: PrismaService,
     @Inject(USER_EVENT_PUBLISHER) private readonly events: UserEventPublisher,
+    private readonly ranking: ProviderRankingService,
   ) {}
+
+  /**
+   * Admin preview: who would be asked first for this service and place, and how each score is made, with the
+   * weights being tried (not saved yet). The same eligibility as a real order: area, skill, active, available.
+   */
+  async previewRanking(input: { serviceId: string; location?: ServiceLocation | null; weights: RankingWeights }) {
+    const order = { serviceId: input.serviceId };
+    let ids: string[];
+    let area: 'UPAZILA' | 'DISTRICT' | 'ANY' = 'ANY';
+    if (!input.location) ids = await this.eligibleIds(order, [], this.prisma, RANKING_POOL, {});
+    else {
+      ids = await this.eligibleIds(order, [], this.prisma, RANKING_POOL, { serviceAreas: { some: { upazilaId: input.location.upazilaId } } });
+      area = 'UPAZILA';
+      if (ids.length === 0) {
+        ids = await this.eligibleIds(order, [], this.prisma, RANKING_POOL, { serviceAreas: { some: { districtId: input.location.districtId } } });
+        area = 'DISTRICT';
+      }
+    }
+
+    const [stats, profiles] = await Promise.all([
+      this.ranking.statsFor(ids),
+      this.prisma.providerProfile.findMany({ where: { id: { in: ids } }, select: { id: true, companyName: true, user: { select: { name: true, username: true } } } }),
+    ]);
+    const names = new Map(profiles.map((profile) => [profile.id, profile.companyName?.trim() || profile.user.name || profile.user.username || 'Provider']));
+    const ranked = rankProviders(ids, stats, input.weights, offerSeconds());
+    const perWave = providersPerWave();
+
+    return {
+      area,
+      providersPerWave: perWave,
+      providers: ranked.map((id, index) => {
+        const providerStats = stats.get(id) ?? null;
+        const result = providerStats ? dispatchScore(providerStats, input.weights, offerSeconds()) : null;
+        return {
+          providerId: id,
+          name: names.get(id) ?? 'Provider',
+          position: index + 1,
+          wave: Math.floor(index / perWave) + 1,
+          score: result?.score ?? null,
+          parts: result?.parts ?? null,
+          stats: providerStats,
+        };
+      }),
+    };
+  }
 
   /**
    * Providers who may be offered this order: they enabled the service as a skill, are active and available
@@ -46,7 +94,32 @@ export class OrderDispatchService {
     return this.queryProviders(order, alreadyOfferedIds, client, take, { serviceAreas: { some: { districtId: order.location.districtId } } });
   }
 
+  /**
+   * With the admin's dispatch ranking on, the eligible providers (up to RANKING_POOL) are ordered by their dispatch
+   * score and the best `take` are asked. Off (the default), or if ranking fails for any reason, the old order
+   * (rating, then completed orders) stands: a ranking problem never stops an order from going out.
+   */
   private async queryProviders(
+    order: { serviceId: string; serviceIds?: string[]; customerUserId?: string },
+    alreadyOfferedIds: string[],
+    client: Tx | PrismaService,
+    take: number,
+    areaFilter: Prisma.ProviderProfileWhereInput,
+  ) {
+    const settings = await this.ranking.getSettings().catch(() => null);
+    if (!settings?.isEnabled) return this.eligibleIds(order, alreadyOfferedIds, client, take, areaFilter);
+
+    const pool = await this.eligibleIds(order, alreadyOfferedIds, client, RANKING_POOL, areaFilter);
+    try {
+      return rankProviders(pool, await this.ranking.statsFor(pool), settings.weights, offerSeconds()).slice(0, take);
+    } catch (error) {
+      this.logger.warn(`Dispatch ranking skipped, using rating order: ${error instanceof Error ? error.message : String(error)}`);
+      return pool.slice(0, take);
+    }
+  }
+
+  /** Every provider who may be offered this order, in the old order (rating, then completed orders). */
+  private async eligibleIds(
     order: { serviceId: string; serviceIds?: string[]; customerUserId?: string },
     alreadyOfferedIds: string[],
     client: Tx | PrismaService,

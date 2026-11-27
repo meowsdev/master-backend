@@ -28,7 +28,9 @@ function build(options: { orderStatus?: string; offers?: Offer[]; eligible?: str
     $transaction: jest.fn((callback: (client: typeof tx) => unknown) => callback(tx)),
   };
   const gateway = { publishToUser: jest.fn() };
-  return { service: new OrderDispatchService(prisma as never, gateway as never), tx, prisma, gateway };
+  // Ranking off (the default): the old order, rating then completed orders.
+  const ranking = { getSettings: jest.fn().mockResolvedValue({ isEnabled: false, weights: {} }), statsFor: jest.fn() };
+  return { service: new OrderDispatchService(prisma as never, gateway as never, ranking as never), tx, prisma, gateway, ranking };
 }
 
 describe('OrderDispatchService', () => {
@@ -60,6 +62,37 @@ describe('OrderDispatchService', () => {
 
     it('takes at most five providers per group', async () => {
       const { service, tx } = build();
+      await service.dispatchNextWave('o1');
+      expect(tx.providerProfile.findMany.mock.calls[0][0].take).toBe(5);
+    });
+  });
+
+  describe("with the admin's dispatch ranking on", () => {
+    const responseOnly = { responseRate: 10, responseSpeed: 0, successScore: 0, rating: 0, behaviour: 0, level: 0, experience: 0, workload: 0, newcomer: 0 };
+    const stats = (responseRate: number) => ({ responseRate, avgResponseSeconds: null, successScore: null, rating: null, behaviour: 100, level: 'LEVEL_0', completedOrders: 10, activeOrders: 0 });
+
+    it('scores the whole eligible pool and offers the best first', async () => {
+      const { service, tx, ranking } = build({ eligible: ['p1', 'p2', 'p3'] });
+      ranking.getSettings.mockResolvedValue({ isEnabled: true, weights: responseOnly });
+      ranking.statsFor.mockResolvedValue(new Map([['p1', stats(40)], ['p2', stats(70)], ['p3', stats(100)]]));
+      await service.dispatchNextWave('o1');
+      expect(tx.providerProfile.findMany.mock.calls[0][0].take).toBe(200);
+      const offered = tx.orderOffer.createMany.mock.calls[0][0].data.map((offer: { providerId: string }) => offer.providerId);
+      expect(offered).toEqual(['p3', 'p2', 'p1']);
+    });
+
+    it('still sends the order out in the old order if ranking fails', async () => {
+      const { service, tx, ranking } = build({ eligible: ['p1', 'p2'] });
+      ranking.getSettings.mockResolvedValue({ isEnabled: true, weights: responseOnly });
+      ranking.statsFor.mockRejectedValue(new Error('stats table missing'));
+      await service.dispatchNextWave('o1');
+      const offered = tx.orderOffer.createMany.mock.calls[0][0].data.map((offer: { providerId: string }) => offer.providerId);
+      expect(offered).toEqual(['p1', 'p2']);
+    });
+
+    it('uses the old order when the settings cannot be read', async () => {
+      const { service, tx, ranking } = build();
+      ranking.getSettings.mockRejectedValue(new Error('no table yet'));
       await service.dispatchNextWave('o1');
       expect(tx.providerProfile.findMany.mock.calls[0][0].take).toBe(5);
     });
