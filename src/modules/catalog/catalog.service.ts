@@ -300,11 +300,16 @@ export class CatalogService {
     };
   }
 
-  /** Public reviews of a sub-service (orders that contained it) or of a whole main service, newest first. */
+  /**
+   * Public reviews of a sub-service (orders that contained it) or of a whole main service, newest first.
+   * includeHidden (staff only): the list also holds reviews an admin hid, each marked; the star summary stays the
+   * public one, so staff see the same rating customers see.
+   */
   async getReviews(
     scope: { serviceId?: string; categoryId?: string },
     page = 1,
     pageSize = 10,
+    options: { includeHidden?: boolean } = {},
   ) {
     const orderScope: Prisma.OrderWhereInput = scope.serviceId
       ? {
@@ -318,19 +323,23 @@ export class CatalogService {
       ...PUBLIC_REVIEW,
       order: orderScope,
     };
+    const listWhere: Prisma.ProviderReviewWhereInput = options.includeHidden
+      ? { status: 'ACTIVE', order: orderScope }
+      : where;
 
-    const [ratings, rows] = await Promise.all([
+    const [ratings, rows, totalItems] = await Promise.all([
       this.prisma.providerReview.findMany({
         where,
         select: { customerRating: true },
       }),
       this.prisma.providerReview.findMany({
-        where,
+        where: listWhere,
         orderBy: { createdAt: 'desc' },
         skip: (Math.max(1, page) - 1) * pageSize,
         take: pageSize,
         select: {
           id: true,
+          isPublic: true,
           customerRating: true,
           reviewComment: true,
           createdAt: true,
@@ -340,14 +349,18 @@ export class CatalogService {
           },
         },
       }),
+      this.prisma.providerReview.count({ where: listWhere }),
     ]);
 
     return {
       summary: summarizeRatings(ratings.map((row) => row.customerRating)),
       page,
       pageSize,
+      /** How many reviews the list has in all (hidden ones included for staff). */
+      totalItems,
       items: rows.map((row) => ({
         id: row.id,
+        isPublic: row.isPublic,
         rating: row.customerRating,
         comment: row.reviewComment,
         createdAt: row.createdAt,

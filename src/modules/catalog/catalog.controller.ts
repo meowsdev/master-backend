@@ -93,7 +93,19 @@ export class CatalogController {
 @Roles(UserRole.ADMIN, UserRole.MANAGER)
 @Controller('catalog/admin')
 export class CatalogAdminController {
-  constructor(private readonly admin: CatalogAdminService) {}
+  constructor(
+    private readonly admin: CatalogAdminService,
+    private readonly catalog: CatalogService,
+  ) {}
+
+  @Get('main-services/:id/reviews')
+  @ApiOperation({ summary: 'STAFF: the reviews of a main service, hidden ones too (marked), for hide / show' })
+  mainServiceReviews(
+    @Param('id') id: string,
+    @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
+  ) {
+    return this.catalog.getReviews({ categoryId: id }, page, 10, { includeHidden: true });
+  }
 
   @Get('tree')
   tree() {
