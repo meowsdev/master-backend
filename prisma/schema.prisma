@@ -239,6 +239,9 @@ model ProviderProfile {
   /// Why the admin set the level by hand (shown to the provider).
   levelLockReason      String?       @db.VarChar(300)
   experienceYears      Int           @default(0)
+  /// Providers who were working before KYC was required may still get orders until this moment without an
+  /// approved KYC. Null (every new provider): no orders until the KYC is approved.
+  kycGraceUntil        DateTime?
   isAvailable          Boolean       @default(true)
   monthlyEarnings      Decimal       @default(0.0) @db.Decimal(10, 2)
   walletBalance        Decimal       @default(0.0) @db.Decimal(10, 2)
@@ -296,16 +299,39 @@ model TechnicianProfile {
   @@index([providerAgencyId])
 }
 
+/// A provider's identity check. PENDING once sent, until an admin approves or rejects it (with a reason).
+/// The NID pictures and the photo are private files (keys, not public URLs): only the provider and staff see them.
 model ProviderKyc {
-  id             String    @id @default(uuid())
-  providerId     String    @unique
-  nidNumber      String?   @db.VarChar(30)
-  tradeLicenseNo String?   @db.VarChar(40)
-  status         KycStatus @default(PENDING)
-  nidFrontUrl    String?   @db.VarChar(255)
-  nidBackUrl     String?   @db.VarChar(255)
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
+  id                String    @id @default(uuid())
+  providerId        String    @unique
+  fullName          String?   @db.VarChar(100)
+  fatherName        String?   @db.VarChar(100)
+  motherName        String?   @db.VarChar(100)
+  /// MALE, FEMALE or OTHER.
+  gender            String?   @db.VarChar(10)
+  /// The number to reach the provider on (starts as their login number), as +8801XXXXXXXXX.
+  contactPhone      String?   @db.VarChar(20)
+  /// The address on the NID (not where they work: that is their service areas).
+  districtId        Int?
+  upazilaId         Int?
+  postCode          String?   @db.VarChar(4)
+  addressDetail     String?   @db.VarChar(300)
+  nidNumber         String?   @db.VarChar(30)
+  tradeLicenseNo    String?   @db.VarChar(40)
+  status            KycStatus @default(PENDING)
+  /// Old public URLs (unused) or private file keys from POST /provider-kyc/me/documents.
+  nidFrontUrl       String?   @db.VarChar(255)
+  nidBackUrl        String?   @db.VarChar(255)
+  selfieUrl         String?   @db.VarChar(255)
+  /// 2-3 family members to call when the provider cannot be reached: [{ name, relation, phone }].
+  emergencyContacts Json      @default("[]")
+  submittedAt       DateTime?
+  reviewedAt        DateTime?
+  reviewedById      String?
+  /// Why an admin rejected it, shown to the provider so they can fix and send again.
+  rejectReason      String?   @db.VarChar(300)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
 
   provider ProviderProfile @relation(fields: [providerId], references: [id], onDelete: Cascade)
 }

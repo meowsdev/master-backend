@@ -1,6 +1,7 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { OfferStatus, OrderStatus, Prisma, UserRole, UserStatus } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { providerAccountWhere } from '../provider-kyc/kyc-rules';
 import { LocationsService } from '../locations/locations.service';
 import { ratingsFromProviders, reviewsFromCustomers } from '../provider-review/received-reviews';
 import { CreateMemberDto } from './dto/create-member.dto';
@@ -90,7 +91,10 @@ export class AdminMembersService {
     const base = { ...member, area: this.areaName(member.districtId, member.upazilaId) };
     if (member.role === UserRole.PROVIDER) return { ...base, provider: await this.providerSection(memberId) };
     if (member.role === UserRole.TECHNICIAN) return { ...base, technician: await this.technicianSection(memberId) };
-    return { ...base, customer: await this.customerSection(memberId) };
+    // A customer who is also a provider (one number, both sides) or who applied to be one: staff see the provider
+    // side too, with its KYC to review.
+    const providerAccount = await this.prisma.providerProfile.findFirst({ where: { userId: memberId, ...providerAccountWhere() }, select: { id: true } });
+    return { ...base, customer: await this.customerSection(memberId), ...(providerAccount ? { provider: await this.providerSection(memberId) } : {}) };
   }
 
   /**

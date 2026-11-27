@@ -60,6 +60,13 @@ describe('OrderDispatchService', () => {
       expect(where.user).toMatchObject({ role: 'PROVIDER', status: 'ACTIVE', id: { not: 'customer-user' }, serviceAssignments: { some: { serviceId: 's1', isActive: true } } });
     });
 
+    it('asks only verified providers, or ones from before KYC still in their grace period', async () => {
+      const { service, tx } = build();
+      await service.dispatchNextWave('o1');
+      const where = tx.providerProfile.findMany.mock.calls[0][0].where;
+      expect(where.AND).toEqual([{ OR: [{ kyc: { status: 'APPROVED' } }, { kycGraceUntil: { gt: NOW } }] }]);
+    });
+
     it('takes at most five providers per group', async () => {
       const { service, tx } = build();
       await service.dispatchNextWave('o1');

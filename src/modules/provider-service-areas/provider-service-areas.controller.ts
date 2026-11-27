@@ -10,7 +10,9 @@ import { ProviderServiceAreasService } from './provider-service-areas.service';
 @ApiTags('Provider service areas')
 @ApiBearerAuth('JWT-auth')
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(UserRole.PROVIDER)
+// A customer applying to be a provider on the same number chooses their areas in the KYC too (they need a provider
+// side for that, which POST /provider-kyc/apply gives; without one the service answers 404).
+@Roles(UserRole.PROVIDER, UserRole.CUSTOMER)
 @Controller('providers/me/service-areas')
 export class ProviderServiceAreasController {
   constructor(private readonly areas: ProviderServiceAreasService) {}

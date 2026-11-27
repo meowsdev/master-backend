@@ -18,6 +18,7 @@ import { SessionContext, SessionsService } from './sessions.service';
 import { LocationsService } from '../locations/locations.service';
 import { SELF_SERVICE_SIGNUP_ROLES } from './role-policy';
 import { phoneLookupVariants } from '../../common/phone';
+import { kycAllowsOrders } from '../provider-kyc/kyc-rules';
 
 const USERNAME_PATTERN = /^[a-z0-9_]{3,20}$/;
 
@@ -325,19 +326,33 @@ export class AuthService {
 
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
+      select: { id: true, role: true, providerProfile: { select: { kycGraceUntil: true, kyc: { select: { status: true } } } } },
     });
 
     if (!user) {
       throw new BadRequestException('User not found');
     }
+    if (user.role === role) return this.getMe(userId);
 
-    // Strict single role constraint: A single phone number can never have more than one role
-    if (user.role !== role) {
-      throw new BadRequestException(
-        `A single phone number cannot have more than one role. This account is permanently registered as ${user.role}.`,
-      );
+    /*
+     * One number, two sides: a customer who is also a verified provider switches between the two with Switch
+     * Account. The active side is User.role, which every request reads fresh, so the whole app follows at once.
+     * Every other change of role (technician, staff, counselor) stays impossible, as before.
+     */
+    const isCustomerToProvider = user.role === UserRole.CUSTOMER && role === UserRole.PROVIDER;
+    const isProviderToCustomer = user.role === UserRole.PROVIDER && role === UserRole.CUSTOMER;
+    if (!isCustomerToProvider && !isProviderToCustomer) {
+      throw new BadRequestException(`This account is registered as ${user.role} and cannot switch to ${role}.`);
+    }
+    if (isCustomerToProvider && !(user.providerProfile && kycAllowsOrders(user.providerProfile))) {
+      throw new ForbiddenException('Your provider verification (KYC) must be approved before you can switch to provider.');
     }
 
+    await this.prisma.$transaction(async (tx) => {
+      // A provider switching to customer for the first time gets their customer side now.
+      await this.ensureProfile(tx, userId, role);
+      await tx.user.update({ where: { id: userId }, data: { role } });
+    });
     return this.getMe(userId);
   }
 
@@ -408,8 +423,11 @@ export class AuthService {
 
     if (!user) return null;
 
-    // Strict single role constraint: Each phone number has only its single assigned role
+    // The sides this number can switch to: a provider can always be a customer too; a customer can be a provider once
+    // their KYC is approved (or they were a provider before KYC and are in their grace period). Others: one role.
     const availableRoles: UserRole[] = [user.role];
+    if (user.role === UserRole.PROVIDER) availableRoles.push(UserRole.CUSTOMER);
+    if (user.role === UserRole.CUSTOMER && (await this.canActAsProvider(userId))) availableRoles.push(UserRole.PROVIDER);
 
     return {
       ...user,
@@ -462,6 +480,14 @@ export class AuthService {
     if (user.role === UserRole.COUNSELOR) return user.counselorProfile;
     if (user.role === UserRole.TECHNICIAN) return user.technicianProfile;
     return null;
+  }
+
+  private async canActAsProvider(userId: string): Promise<boolean> {
+    const profile = await this.prisma.providerProfile.findUnique({
+      where: { userId },
+      select: { kycGraceUntil: true, kyc: { select: { status: true } } },
+    });
+    return Boolean(profile && kycAllowsOrders(profile));
   }
 
   private async ensureProfile(

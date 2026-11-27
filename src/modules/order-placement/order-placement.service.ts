@@ -1,12 +1,13 @@
 import { assertNoPhoneNumber } from '../../common/contact-privacy';
 import { phoneLookupVariants } from '../../common/phone';
-import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { OrderCreator, Prisma, PriceUnit, UserRole } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { LocationsService } from '../locations/locations.service';
 import { OrderOrigin, OrdersService } from '../orders/orders.service';
 import { AdminCustomOrderDto, AdminPlaceCartOrderDto, AdminPlaceOrderDto, CustomerCustomOrderDto, OrderPlaceFieldsDto, PlaceCartOrderDto, PlaceOrderDto, QuoteCartDto, QuoteOrderDto } from './dto/place-order.dto';
 import { ensureCustomService } from './custom-service';
+import { kycAllowsOrders } from '../provider-kyc/kyc-rules';
 import { ensureCategoryCustomService } from '../catalog/catalog-custom';
 import { calculateCartQuote, calculateQuote, PriceLine, PricedAnswer } from './order-pricing';
 import { assertValidSchedule, TIME_SLOTS } from './order-schedule';
@@ -102,8 +103,10 @@ export class OrderPlacementService {
    */
   async originFor(user: { id: string; role: UserRole }): Promise<OrderOrigin> {
     if (user.role !== UserRole.PROVIDER) return { createdByRole: OrderCreator.ADMIN, createdById: user.id };
-    const provider = await this.prisma.providerProfile.findUnique({ where: { userId: user.id }, select: { id: true } });
+    const provider = await this.prisma.providerProfile.findUnique({ where: { userId: user.id }, select: { id: true, kycGraceUntil: true, kyc: { select: { status: true } } } });
     if (!provider) throw new BadRequestException('Provider profile not found');
+    // Same rule as getting offers: verified, or still in the grace period of a provider from before KYC.
+    if (!kycAllowsOrders(provider)) throw new ForbiddenException('Complete your verification (KYC) and wait for approval before creating orders');
     return { createdByRole: OrderCreator.PROVIDER, createdById: user.id, ownProviderId: provider.id };
   }
 

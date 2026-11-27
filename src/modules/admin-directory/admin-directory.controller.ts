@@ -5,6 +5,7 @@ import { Roles } from '../auth/decorators/roles.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { PrismaService } from '../../prisma/prisma.service';
+import { providerAccountWhere } from '../provider-kyc/kyc-rules';
 
 @ApiTags('Admin')
 @ApiBearerAuth('JWT-auth')
@@ -20,8 +21,9 @@ export class AdminDirectoryController {
   @ApiOperation({ summary: 'ADMIN: list providers with level, rating, wallet and KYC status' })
   async providers() {
     const providers = await this.prisma.providerProfile.findMany({
-      // Only accounts that really are providers: other roles can own a stray profile row, which must not be listed or chosen.
-      where: { user: { role: UserRole.PROVIDER } },
+      // Only accounts that really are providers (on their provider or their customer side right now), and customers
+      // who applied to be one, so their KYC can be reviewed. A stray profile row on a plain customer is not listed.
+      where: providerAccountWhere(),
       orderBy: { createdAt: 'desc' },
       select: {
         id: true,

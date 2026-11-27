@@ -7,6 +7,7 @@ import { commissionFor, providerCommissionPercent } from '../orders/orders.helpe
 import type { UserEventPublisher } from './user-events';
 import { ProviderRankingService, offerSeconds } from './provider-ranking.service';
 import { RankingWeights, dispatchScore, rankProviders } from './ranking-rules';
+import { kycAllowsOrdersWhere } from '../provider-kyc/kyc-rules';
 
 /** How many providers hear about a new order at once. */
 const providersPerWave = () => Number(process.env.DISPATCH_PROVIDERS_PER_WAVE) || 5;
@@ -137,6 +138,8 @@ export class OrderDispatchService {
         // cleared (assertProvider). Such a provider is marked unavailable only because of the wallet.
         OR: [{ isAvailable: true }, { isBlockedForNegative: true }],
         ...(alreadyOfferedIds.length > 0 ? { id: { notIn: alreadyOfferedIds } } : {}),
+        // Verified (KYC approved), or a provider from before KYC was required who is still in their grace period.
+        AND: [kycAllowsOrdersWhere()],
         user: {
           role: UserRole.PROVIDER,
           status: 'ACTIVE',

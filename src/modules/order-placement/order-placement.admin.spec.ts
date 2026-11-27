@@ -1,4 +1,4 @@
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { AdminPlaceOrderDto } from './dto/place-order.dto';
 import { OrderPlacementService } from './order-placement.service';
 import { resetCustomServiceCache } from './custom-service';
@@ -136,7 +136,7 @@ describe('OrderPlacementService.placeCustomOrderForCustomer (a service not in th
 });
 
 describe('OrderPlacementService.originFor (who is booking for a customer)', () => {
-  function buildOrigin(provider: { id: string } | null) {
+  function buildOrigin(provider: { id: string; kycGraceUntil?: Date | null; kyc?: { status: string } | null } | null) {
     const prisma = { providerProfile: { findUnique: jest.fn().mockResolvedValue(provider) } };
     return new OrderPlacementService(prisma as never, {} as never, {} as never);
   }
@@ -145,8 +145,19 @@ describe('OrderPlacementService.originFor (who is booking for a customer)', () =
     await expect(buildOrigin(null).originFor({ id: 'a1', role: 'MANAGER' })).resolves.toEqual({ createdByRole: 'ADMIN', createdById: 'a1' });
   });
 
-  it("tags a provider's booking as PROVIDER and keeps it for that provider", async () => {
-    await expect(buildOrigin({ id: 'pp1' }).originFor({ id: 'u1', role: 'PROVIDER' })).resolves.toEqual({ createdByRole: 'PROVIDER', createdById: 'u1', ownProviderId: 'pp1' });
+  it("tags a verified provider's booking as PROVIDER and keeps it for that provider", async () => {
+    const verified = { id: 'pp1', kycGraceUntil: null, kyc: { status: 'APPROVED' } };
+    await expect(buildOrigin(verified).originFor({ id: 'u1', role: 'PROVIDER' })).resolves.toEqual({ createdByRole: 'PROVIDER', createdById: 'u1', ownProviderId: 'pp1' });
+  });
+
+  it('lets a provider from before KYC book while their grace period lasts', async () => {
+    const inGrace = { id: 'pp1', kycGraceUntil: new Date(Date.now() + 86_400_000), kyc: null };
+    await expect(buildOrigin(inGrace).originFor({ id: 'u1', role: 'PROVIDER' })).resolves.toMatchObject({ ownProviderId: 'pp1' });
+  });
+
+  it('refuses a provider who is not verified and has no grace', async () => {
+    await expect(buildOrigin({ id: 'pp1', kycGraceUntil: null, kyc: { status: 'PENDING' } }).originFor({ id: 'u1', role: 'PROVIDER' })).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(buildOrigin({ id: 'pp1', kycGraceUntil: new Date(0), kyc: null }).originFor({ id: 'u1', role: 'PROVIDER' })).rejects.toBeInstanceOf(ForbiddenException);
   });
 
   it('refuses a provider account with no provider profile', async () => {
