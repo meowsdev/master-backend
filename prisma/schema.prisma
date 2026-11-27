@@ -326,6 +326,9 @@ model ProviderKyc {
   /// 2-3 family members to call when the provider cannot be reached: [{ name, relation, phone }].
   emergencyContacts Json      @default("[]")
   submittedAt       DateTime?
+  /// When the provider accepted the provider terms (conduct and liability) on sending, and which version of them.
+  termsAcceptedAt   DateTime?
+  termsVersion      String?   @db.VarChar(40)
   reviewedAt        DateTime?
   reviewedById      String?
   /// Why an admin rejected it, shown to the provider so they can fix and send again.

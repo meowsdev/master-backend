@@ -121,6 +121,8 @@ const form = {
   nidFrontKey: key(USER, 1),
   nidBackKey: key(USER, 2),
   selfieKey: key(USER, 3),
+  acceptTerms: true as const,
+  termsVersion: '2026-11-27',
   emergencyContacts: [
     { name: 'Karim', relation: 'বাবা', phone: '01811111111' },
     { name: 'Salma', relation: 'মা', phone: '01922222222' },
@@ -263,5 +265,17 @@ describe('a customer applying to be a provider on the same number', () => {
       create: { userId: USER },
       update: {},
     });
+  });
+});
+
+describe('the provider terms', () => {
+  it('records when and which version the provider accepted, with every send', async () => {
+    const { service, prisma } = build();
+    await service.submitMine(USER, form);
+    const [[upsert]] = prisma.providerKyc.upsert.mock.calls as [
+      [{ create: Record<string, unknown> }],
+    ];
+    expect(upsert.create.termsVersion).toBe('2026-11-27');
+    expect(upsert.create.termsAcceptedAt).toBeInstanceOf(Date);
   });
 });

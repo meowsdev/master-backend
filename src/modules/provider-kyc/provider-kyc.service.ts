@@ -45,6 +45,8 @@ const KYC_SELECT = {
   selfieUrl: true,
   emergencyContacts: true,
   submittedAt: true,
+  termsAcceptedAt: true,
+  termsVersion: true,
   reviewedAt: true,
   rejectReason: true,
 } satisfies Prisma.ProviderKycSelect;
@@ -164,6 +166,9 @@ export class ProviderKycService {
       emergencyContacts: emergencyContacts as unknown as Prisma.InputJsonValue,
       status: KycStatus.PENDING,
       submittedAt: new Date(),
+      // Every send is a fresh acceptance of the terms shown just before it.
+      termsAcceptedAt: new Date(),
+      termsVersion: dto.termsVersion.trim(),
       reviewedAt: null,
       reviewedById: null,
       rejectReason: null,

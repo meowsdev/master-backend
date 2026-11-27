@@ -66,6 +66,20 @@ export class SubmitProviderKycDto {
   @ApiProperty() @IsString() @MaxLength(120) nidBackKey!: string;
   @ApiProperty() @IsString() @MaxLength(120) selfieKey!: string;
 
+  /** The provider read and accepted the provider terms (conduct and liability) shown before sending. */
+  @ApiProperty({ enum: [true] })
+  @IsIn([true], {
+    message: 'Accept the provider terms to send your verification',
+  })
+  acceptTerms!: true;
+
+  /** Which version of the terms they saw, kept with the acceptance. */
+  @ApiProperty({ example: '2026-11-27' })
+  @IsString()
+  @MinLength(1)
+  @MaxLength(40)
+  termsVersion!: string;
+
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
